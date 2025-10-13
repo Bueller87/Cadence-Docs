@@ -1,20 +1,29 @@
 ---
 layout: default 
-title: Deploy Cadence to Google Kubernetes Engine (GKE) with PostgreSQL and Elasticsearch v7 using Helm
+title: Deploy Cadence with Helm on GKE
 permalink: /docs/codelabs/helm-deploy-postgres-elasticsearch
 ---
-## Codelab: Deploy Cadence to Google Kubernetes Engine (GKE) with PostgreSQL and Elasticsearch v7 using Helm
+## Codelab: Deploy Cadence with Helm on GKE
 
-This codelab walks you through deploying Cadence on a Google Cloud GKE cluster using Helm, configuring PostgreSQL as the main database and Elasticsearch v7 for advanced visibility. It is designed for first-time Helm and Kubernetes users.
+Ready to deploy Cadence? This codelab walks you through a complete, production-ready deployment using official Helm charts—no custom scripting required. Whether you're new to Kubernetes or an experienced platform engineer, you'll have Cadence running on GKE with PostgreSQL and Elasticsearch in under 30 minutes.
 
-- Prerequisites: Google Cloud project with billing enabled
+We've done the heavy lifting: the Helm charts are tested, maintained, and ready to use. Just follow the steps, and you'll have a fully functional Cadence cluster with advanced visibility features.
 
-### What you’ll build
-- A GKE cluster
-- A Cadence deployment (frontend, history, matching, worker)
+**Prerequisites:**
+- Google Cloud project with billing enabled
+- An existing GKE cluster with kubectl access
+  - If you need to create a cluster, see [Creating a GKE cluster](https://cloud.google.com/kubernetes-engine/docs/how-to/creating-a-zonal-cluster)
+- Basic familiarity with terminal commands
+
+**Designed for:**
+- First-time Helm and Kubernetes users who want clear explanations
+- Experienced users who need a quick reference
+
+### What you'll build
+- A complete Cadence deployment (frontend, history, matching, worker)
 - PostgreSQL as the main persistence store
 - Elasticsearch v7 for advanced visibility
-- Cadence Web UI
+- Cadence Web UI for workflow monitoring
 
 ---
 
@@ -136,13 +145,13 @@ You should see a list of nodes in your cluster with a `Ready` status.
 Namespaces provide logical isolation within the cluster:
 
 ```bash
-kubectl create namespace cadencetest
+kubectl create namespace cadence-codelab
 ```
 
 Verify the namespace was created:
 
 ```bash
-kubectl get namespace cadencetest
+kubectl get namespace cadence-codelab
 ```
 
 ---
@@ -199,7 +208,7 @@ In the `cadence-charts` directory, create `examples/gke-postgres-es7-values.yaml
 **Before using this file, you MUST update the Elasticsearch `hosts` value** (line 24) with your actual ES endpoint:
 
 ```yaml
-# Namespace note: install into namespace: cadencetest
+# Namespace note: install into namespace: cadence-codelab
 
 # Force Cadence to use PostgreSQL for main DB
 config:
@@ -207,7 +216,7 @@ config:
     database:
       driver: "postgres"
       sql:
-        hosts: "cadence-release-postgresql.cadencetest.svc.cluster.local"
+        hosts: "cadence-release-postgresql.cadence-codelab.svc.cluster.local"
         port: 5432
         dbname: "cadence"
         visibilityDbname: "cadence_visibility"
@@ -320,14 +329,14 @@ helm repo update
 
 Install Cadence using the values file from Step 2. This command will:
 - Create a Helm release named `cadence-release`
-- Deploy to the `cadencetest` namespace
+- Deploy to the `cadence-codelab` namespace
 - Install PostgreSQL, Cadence services (frontend, history, matching, worker), and Cadence Web
 - Run schema initialization jobs
 - Wait until all resources are ready (typically 2-5 minutes)
 
 ```bash
 helm upgrade --install cadence-release ./charts/cadence \
-  --namespace cadencetest \
+  --namespace cadence-codelab \
   -f examples/gke-postgres-es7-values.yaml \
   --wait
 ```
@@ -339,7 +348,7 @@ The `--wait` flag keeps the command running until all pods are ready. You'll see
 Check that all pods are running:
 
 ```bash
-kubectl get pods -n cadencetest
+kubectl get pods -n cadence-codelab
 ```
 
 You should see pods for:
@@ -356,7 +365,7 @@ All pods should show `Running` status (or `Completed` for jobs).
 Check services:
 
 ```bash
-kubectl get svc -n cadencetest
+kubectl get svc -n cadence-codelab
 ```
 
 You should see services for frontend, web, and PostgreSQL.
@@ -372,7 +381,7 @@ This step confirms that database schemas were initialized correctly and sets up 
 Schema jobs run once during installation to set up database tables and Elasticsearch indices. Check if the jobs completed successfully:
 
 ```bash
-kubectl get jobs -n cadencetest
+kubectl get jobs -n cadence-codelab
 ```
 
 You should see jobs with `COMPLETIONS` showing `1/1`. If jobs are still present, check their logs:
@@ -380,13 +389,13 @@ You should see jobs with `COMPLETIONS` showing `1/1`. If jobs are still present,
 View PostgreSQL schema job logs:
 
 ```bash
-kubectl logs job/cadence-release-cadence-schema-server -n cadencetest --tail=200
+kubectl logs job/cadence-release-cadence-schema-server -n cadence-codelab --tail=200
 ```
 
 View Elasticsearch schema job logs:
 
 ```bash
-kubectl logs job/cadence-release-cadence-schema-elasticsearch -n cadencetest --tail=200
+kubectl logs job/cadence-release-cadence-schema-elasticsearch -n cadence-codelab --tail=200
 ```
 
 Look for messages indicating successful schema creation. If you see errors, they typically relate to connectivity issues with PostgreSQL or Elasticsearch.
@@ -398,7 +407,7 @@ Port-forwarding creates a tunnel from your local machine to services running in 
 **Port-forward the Cadence frontend** (for CLI access):
 
 ```bash
-kubectl port-forward -n cadencetest svc/cadence-release-cadence-frontend 7833:7833
+kubectl port-forward -n cadence-codelab svc/cadence-release-cadence-frontend 7833:7833
 ```
 
 This command runs in the foreground. Keep it running and open a new terminal for the next command.
@@ -406,7 +415,7 @@ This command runs in the foreground. Keep it running and open a new terminal for
 **In a new terminal, port-forward the Cadence Web UI:**
 
 ```bash
-kubectl port-forward -n cadencetest svc/cadence-release-cadence-web 8088:8088
+kubectl port-forward -n cadence-codelab svc/cadence-release-cadence-web 8088:8088
 ```
 
 This also runs in the foreground. Keep both port-forwards running.
@@ -436,13 +445,15 @@ This step uses `tctl` (the Cadence CLI) to register a domain. We'll exec into a 
 Find a frontend pod name and store it in a variable:
 
 ```bash
-POD=$(kubectl get pods -n cadencetest -l app.kubernetes.io/component=frontend -o jsonpath='{.items[0].metadata.name}')
+POD=$(kubectl get pods -n cadence-codelab \
+  -l app.kubernetes.io/component=frontend \
+  -o jsonpath='{.items[0].metadata.name}')
 ```
 
 Register a domain called `sample-domain` with 1 day retention:
 
 ```bash
-kubectl exec -n cadencetest -it "$POD" -- \
+kubectl exec -n cadence-codelab -it "$POD" -- \
   tctl --address cadence-release-cadence-frontend:7833 \
   --do sample-domain domain register -rd 1
 ```
@@ -454,7 +465,7 @@ The `-rd 1` flag sets the workflow history retention period to 1 day. After this
 List all domains to confirm registration:
 
 ```bash
-kubectl exec -n cadencetest -it "$POD" -- \
+kubectl exec -n cadence-codelab -it "$POD" -- \
   tctl --address cadence-release-cadence-frontend:7833 domain list
 ```
 
@@ -501,7 +512,7 @@ When you're done testing, you can remove Cadence and its resources from your clu
 This removes all Cadence pods and services:
 
 ```bash
-helm uninstall cadence-release -n cadencetest
+helm uninstall cadence-release -n cadence-codelab
 ```
 
 This command deletes:
@@ -516,7 +527,7 @@ Note: Persistent volumes may not be automatically deleted depending on your clus
 If you want to remove all resources in the namespace, including any remaining persistent volume claims:
 
 ```bash
-kubectl delete namespace cadencetest
+kubectl delete namespace cadence-codelab
 ```
 
 This ensures complete cleanup. The namespace deletion may take a minute to complete.
@@ -526,7 +537,7 @@ This ensures complete cleanup. The namespace deletion may take a minute to compl
 Confirm all resources are removed:
 
 ```bash
-kubectl get all -n cadencetest
+kubectl get all -n cadence-codelab
 ```
 
 You should see a "No resources found" message or an error that the namespace doesn't exist.
@@ -543,7 +554,7 @@ This section covers common issues and how to resolve them.
 - **Cause:** Insufficient cluster resources or quota limits
 - **Solution:** Check pod status and events:
 ```bash
-kubectl describe pod <pod-name> -n cadencetest
+kubectl describe pod <pod-name> -n cadence-codelab
 ```
 Look for messages about resource requests or quota exceeded. You may need to scale up your cluster or reduce resource requests in the values file.
 
@@ -551,7 +562,7 @@ Look for messages about resource requests or quota exceeded. You may need to sca
 - **Cause:** Schema jobs taking too long or failing
 - **Solution:** Remove the `--wait` flag and monitor manually:
 ```bash
-kubectl get pods -n cadencetest -w
+kubectl get pods -n cadence-codelab -w
 ```
 Check schema job logs for specific errors.
 
@@ -561,7 +572,7 @@ Check schema job logs for specific errors.
 - **Cause:** Misconfigured database credentials or PostgreSQL not running
 - **Solution:** Verify PostgreSQL is running:
 ```bash
-kubectl get pods -n cadencetest -l app.kubernetes.io/name=postgresql
+kubectl get pods -n cadence-codelab -l app.kubernetes.io/name=postgresql
 ```
 Confirm credentials in your values file match: `postgresql.auth.username/password/database` should match `config.persistence.database.sql.user/password/dbname`.
 
@@ -569,7 +580,7 @@ Confirm credentials in your values file match: `postgresql.auth.username/passwor
 - **Cause:** Database connectivity or permission issues
 - **Solution:** Check schema job logs:
 ```bash
-kubectl logs job/cadence-release-cadence-schema-server -n cadencetest
+kubectl logs job/cadence-release-cadence-schema-server -n cadence-codelab
 ```
 Look for connection errors or SQL execution failures.
 
@@ -585,14 +596,17 @@ Look for connection errors or SQL execution failures.
 
 Test connectivity to ES from within the cluster:
 ```bash
-kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- curl -v http://YOUR-ES-HOST:9200
+kubectl run -it --rm debug \
+  --image=curlimages/curl \
+  --restart=Never \
+  -- curl -v http://YOUR-ES-HOST:9200
 ```
 
 **Elasticsearch schema job failing:**
 - **Cause:** Cannot reach ES or incorrect version
 - **Solution:** Check ES schema job logs:
 ```bash
-kubectl logs job/cadence-release-cadence-schema-elasticsearch -n cadencetest
+kubectl logs job/cadence-release-cadence-schema-elasticsearch -n cadence-codelab
 ```
 Verify your ES cluster is v7 and reachable from the cluster.
 
@@ -602,41 +616,41 @@ Verify your ES cluster is v7 and reachable from the cluster.
 - **Cause:** Port-forward not running or wrong port
 - **Solution:** Verify port-forward is active:
 ```bash
-kubectl port-forward -n cadencetest svc/cadence-release-cadence-web 8088:8088
+kubectl port-forward -n cadence-codelab svc/cadence-release-cadence-web 8088:8088
 ```
 Check that the web pod is running:
 ```bash
-kubectl get pods -n cadencetest -l app.kubernetes.io/component=web
+kubectl get pods -n cadence-codelab -l app.kubernetes.io/component=web
 ```
 
 **tctl commands failing:**
 - **Cause:** Frontend not accessible or wrong address
 - **Solution:** Verify frontend pod is running and port-forward is active:
 ```bash
-kubectl get pods -n cadencetest -l app.kubernetes.io/component=frontend
-kubectl port-forward -n cadencetest svc/cadence-release-cadence-frontend 7833:7833
+kubectl get pods -n cadence-codelab -l app.kubernetes.io/component=frontend
+kubectl port-forward -n cadence-codelab svc/cadence-release-cadence-frontend 7833:7833
 ```
 
 #### General Debugging Commands
 
 View all resources in the namespace:
 ```bash
-kubectl get all -n cadencetest
+kubectl get all -n cadence-codelab
 ```
 
 Check pod logs for any service:
 ```bash
-kubectl logs -n cadencetest <pod-name> --tail=100
+kubectl logs -n cadence-codelab <pod-name> --tail=100
 ```
 
 Describe a pod to see events and errors:
 ```bash
-kubectl describe pod -n cadencetest <pod-name>
+kubectl describe pod -n cadence-codelab <pod-name>
 ```
 
 Check Helm release status:
 ```bash
-helm status cadence-release -n cadencetest
+helm status cadence-release -n cadence-codelab
 ```
 
 ### References
