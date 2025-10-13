@@ -16,83 +16,187 @@ This codelab walks you through deploying Cadence on a Google Cloud GKE cluster u
 - Elasticsearch v7 for advanced visibility
 - Cadence Web UI
 
-
-
 ---
 
 ### Step 0: Setup your local tools
 
-Install or verify the following tools:
+This step ensures you have the necessary tools installed and configured. The examples below use macOS commands, but the official documentation links provide instructions for all platforms.
+
+#### Prerequisites
+
+You'll need these tools installed locally:
+
+**Google Cloud SDK (gcloud)** - Manages GCP resources and authentication
+- Install instructions: https://cloud.google.com/sdk/docs/install
+
+**kubectl** - Kubernetes command-line tool for cluster management
+- Install instructions: https://kubernetes.io/docs/tasks/tools/
+
+**Helm** - Kubernetes package manager
+- Install instructions: https://helm.sh/docs/intro/install/
+
+**Quick install (macOS with Homebrew):**
 
 ```bash
-# Install gcloud
 brew install --cask google-cloud-sdk
+```
 
-# Install kubectl
+```bash
 brew install kubectl
+```
 
-# Install Helm
+```bash
 brew install helm
 ```
 
-Authenticate GCloud and set your project/region/zone:
+#### Authenticate and configure GCloud
+
+Initialize gcloud (interactive setup):
 
 ```bash
 gcloud init
-# Or set directly
+```
+
+Or configure manually:
+
+Login to your Google account:
+
+```bash
 gcloud auth login
+```
+
+Set your GCP project (replace `<YOUR_GCP_PROJECT_ID>` with your actual project ID):
+
+```bash
 gcloud config set project <YOUR_GCP_PROJECT_ID>
+```
+
+Set your preferred region:
+
+```bash
 gcloud config set compute/region us-central1
+```
+
+Set your preferred zone:
+
+```bash
 gcloud config set compute/zone us-central1-a
 ```
 
-Get the Cadence Helm charts repository locally:
+#### Get Cadence Helm Charts
+
+This codelab uses the local charts approach. Clone the repository:
 
 ```bash
-# Clone the repo and enter it (official repo)
 git clone https://github.com/cadence-workflow/cadence-charts.git
+```
+
+```bash
 cd cadence-charts
 ```
 
-Optional: use the remote Helm repo instead of cloning (from the official README)
-([source](https://github.com/cadence-workflow/cadence-charts.git)):
+**Alternative approach:** Use the remote Helm repository (not used in this codelab):
 
 ```bash
 helm repo add cadence https://cadence-workflow.github.io/cadence-charts
-helm repo update
-# Then install with: helm install my-cadence cadence/cadence
-# (This codelab uses the local chart path to keep files together.)
 ```
+
+```bash
+helm repo update
+```
+
+Note: If using the remote repo, replace `./charts/cadence` with `cadence/cadence` in install commands.
 
 ---
 
-### Step 1: Create a GKE cluster and connect kubectl
+### Step 1: Connect to your GKE cluster and create a namespace
+
+**Prerequisites:** You need an existing GKE cluster. In many organizations, platform or infra teams manage cluster creation. If you need to create a cluster yourself, see the official documentation: [Creating a GKE cluster](https://cloud.google.com/kubernetes-engine/docs/how-to/creating-a-zonal-cluster)
+
+For this guide, we'll assume your cluster is named `cadence-gke`. Replace this with your actual cluster name in the commands below.
+
+#### Connect kubectl to your cluster
+
+Get credentials for your existing GKE cluster (replace `cadence-gke` with your cluster name):
 
 ```bash
-# Create a small test cluster (adjust as needed)
-gcloud container clusters create cadence-gke \
-  --num-nodes=3 \
-  --machine-type=e2-standard-2 \
-  --enable-ip-alias
-
-# Get cluster credentials for kubectl
 gcloud container clusters get-credentials cadence-gke
+```
 
-# Verify connection
+Verify the connection by listing nodes:
+
+```bash
 kubectl get nodes
 ```
 
-Create a namespace for Cadence:
+You should see a list of nodes in your cluster with a `Ready` status.
+
+#### Create a namespace for Cadence
+
+Namespaces provide logical isolation within the cluster:
 
 ```bash
 kubectl create namespace cadencetest
+```
+
+Verify the namespace was created:
+
+```bash
+kubectl get namespace cadencetest
 ```
 
 ---
 
 ### Step 2: Prepare a Helm values file for PostgreSQL + Elasticsearch v7
 
-In this repository, create `examples/gke-postgres-es7-values.yaml` with the following content:
+This step creates a custom Helm values file to configure Cadence with PostgreSQL as the main database and Elasticsearch v7 for advanced visibility features.
+
+#### Prerequisites: Elasticsearch cluster endpoint
+
+**Important:** You need an existing Elasticsearch v7 cluster. In most organizations, a managed Elasticsearch cluster is provided by your platform or infra team.
+
+Get your Elasticsearch endpoint information:
+- **Hostname/URL:** The DNS name or IP address of your ES cluster
+- **Port:** Usually 9200 (HTTP) or 9243 (HTTPS for managed services)
+- **Credentials:** Username and password if authentication is enabled
+- **TLS settings:** Whether HTTPS is required
+
+**Common Elasticsearch scenarios:**
+
+**1. ES running in the same Kubernetes cluster (different namespace):**
+```yaml
+hosts: "your-es-service.your-es-namespace.svc.cluster.local"
+port: 9200
+protocol: "http"
+```
+
+**2. Managed Elasticsearch service (like Elastic Cloud):**
+```yaml
+hosts: "your-cluster-id.es.us-central1.gcp.cloud.es.io"
+port: 9243
+protocol: "https"
+user: "your-username"
+password: "your-password"
+tls:
+  enabled: true
+```
+
+**3. External Elasticsearch host:**
+```yaml
+hosts: "es.yourcompany.com"
+port: 9200
+protocol: "http"
+```
+
+If you don't have Elasticsearch yet, consider these options:
+- Managed: [Elastic Cloud on GCP](https://www.elastic.co/cloud/)
+- Self-managed Helm: [Bitnami Elasticsearch](https://artifacthub.io/packages/helm/bitnami/elasticsearch)
+
+#### Create the values file
+
+In the `cadence-charts` directory, create `examples/gke-postgres-es7-values.yaml` with the following content.
+
+**Before using this file, you MUST update the Elasticsearch `hosts` value** (line 24) with your actual ES endpoint:
 
 ```yaml
 # Namespace note: install into namespace: cadencetest
@@ -118,7 +222,7 @@ config:
       user: ""
       password: ""
       protocol: "http"
-      hosts: "elasticsearch-master.elastic-system.svc.cluster.local"
+      hosts: "YOUR-ES-HOSTNAME-HERE"  # REPLACE with your actual ES endpoint
       port: 9200
       visibilityIndex: "cadence-visibility"
       tls:
@@ -158,139 +262,406 @@ cassandra:
 mysql:
   enabled: false
 
-# Optional: Cadence Web UI config (ClusterIP by default)
+# Cadence Web UI config (ClusterIP by default)
 web:
   replicas: 1
   service:
     type: ClusterIP
 ```
 
-Notes:
-- This values file: switches main DB to PostgreSQL; enables Elasticsearch v7; turns on schema jobs.
-- It deploys a Bitnami PostgreSQL as part of this Helm release for convenience.
-- You must point `config.persistence.elasticsearch.hosts` to your Elasticsearch v7 cluster DNS or endpoint.
+#### What this configuration does
 
-If you don’t have Elasticsearch yet, consider these options:
-- Managed: [Elastic Cloud on GCP](https://www.elastic.co/cloud/)
-- Self-managed Helm: [Bitnami Elasticsearch](https://artifacthub.io/packages/helm/bitnami/elasticsearch)
+**Database (PostgreSQL):**
+- Deploys a Bitnami PostgreSQL instance as part of this Helm release
+- Creates two databases: `cadence` (main) and `cadence_visibility`
+- PostgreSQL hostname is auto-generated based on release name and namespace
+
+**Elasticsearch (Advanced Visibility):**
+- Enables Elasticsearch v7 for advanced workflow search and filtering
+- Configures Cadence to write and read visibility data from ES
+- You must provide your own ES cluster endpoint
+
+**Schema Jobs:**
+- Automatically runs database schema setup for PostgreSQL
+- Automatically runs index setup for Elasticsearch
+- Jobs run once during installation and complete
+
+**Cadence Web UI:**
+- Deploys the web interface as a ClusterIP service
+- Accessible via port-forward (shown in later steps)
 
 ---
 
-### Step 3: Add Helm repos (if needed) and install Cadence
+### Step 3: Install Cadence with Helm
 
-From the repository root:
+This step installs Cadence and its dependencies (PostgreSQL) into your cluster using the values file you created.
+
+#### Add Helm repositories
+
+First, ensure you're in the `cadence-charts` directory:
 
 ```bash
-# Ensure you are in this repo root
 cd cadence-charts
+```
 
-# (If using remote repos) Add and update Helm repos
+Add the Bitnami repository (needed for the PostgreSQL subchart):
+
+```bash
 helm repo add bitnami https://charts.bitnami.com/bitnami
-helm repo update
+```
 
-# Install Cadence with our values file
+Update Helm repositories to get the latest chart versions:
+
+```bash
+helm repo update
+```
+
+#### Install Cadence
+
+Install Cadence using the values file from Step 2. This command will:
+- Create a Helm release named `cadence-release`
+- Deploy to the `cadencetest` namespace
+- Install PostgreSQL, Cadence services (frontend, history, matching, worker), and Cadence Web
+- Run schema initialization jobs
+- Wait until all resources are ready (typically 2-5 minutes)
+
+```bash
 helm upgrade --install cadence-release ./charts/cadence \
   --namespace cadencetest \
   -f examples/gke-postgres-es7-values.yaml \
   --wait
 ```
 
-Verify resources:
+The `--wait` flag keeps the command running until all pods are ready. You'll see status messages as resources are created.
+
+#### Verify installation
+
+Check that all pods are running:
 
 ```bash
 kubectl get pods -n cadencetest
+```
+
+You should see pods for:
+- `cadence-release-cadence-frontend`
+- `cadence-release-cadence-history`
+- `cadence-release-cadence-matching`
+- `cadence-release-cadence-worker`
+- `cadence-release-cadence-web`
+- `cadence-release-postgresql`
+- Schema jobs (may show as `Completed` or already gone)
+
+All pods should show `Running` status (or `Completed` for jobs).
+
+Check services:
+
+```bash
 kubectl get svc -n cadencetest
 ```
 
-Wait until all pods are `Running` or `Completed` (schema jobs should complete then disappear).
+You should see services for frontend, web, and PostgreSQL.
 
 ---
 
 ### Step 4: Verify schema jobs and Cadence health
 
-Check schema jobs ran successfully:
+This step confirms that database schemas were initialized correctly and sets up local access to Cadence services.
+
+#### Check schema jobs
+
+Schema jobs run once during installation to set up database tables and Elasticsearch indices. Check if the jobs completed successfully:
 
 ```bash
-# If jobs are still present, check their status
 kubectl get jobs -n cadencetest
-kubectl logs job/cadence-release-cadence-schema-server -n cadencetest --tail=200 || true
-kubectl logs job/cadence-release-cadence-schema-elasticsearch -n cadencetest --tail=200 || true
 ```
 
-Port-forward frontend and web to your local machine:
+You should see jobs with `COMPLETIONS` showing `1/1`. If jobs are still present, check their logs:
+
+View PostgreSQL schema job logs:
 
 ```bash
-# Frontend gRPC (7833) and TChannel (7933)
-kubectl port-forward -n cadencetest svc/cadence-release-cadence-frontend 7833:7833 7933:7933
+kubectl logs job/cadence-release-cadence-schema-server -n cadencetest --tail=200
 ```
 
-In a new terminal, port-forward the Web UI:
+View Elasticsearch schema job logs:
+
+```bash
+kubectl logs job/cadence-release-cadence-schema-elasticsearch -n cadencetest --tail=200
+```
+
+Look for messages indicating successful schema creation. If you see errors, they typically relate to connectivity issues with PostgreSQL or Elasticsearch.
+
+#### Access Cadence services locally
+
+Port-forwarding creates a tunnel from your local machine to services running in the cluster. This allows you to interact with Cadence as if it were running locally.
+
+**Port-forward the Cadence frontend** (for CLI access):
+
+```bash
+kubectl port-forward -n cadencetest svc/cadence-release-cadence-frontend 7833:7833
+```
+
+This command runs in the foreground. Keep it running and open a new terminal for the next command.
+
+**In a new terminal, port-forward the Cadence Web UI:**
 
 ```bash
 kubectl port-forward -n cadencetest svc/cadence-release-cadence-web 8088:8088
 ```
 
-Open the Cadence Web UI at `http://localhost:8088`.
+This also runs in the foreground. Keep both port-forwards running.
+
+**Access the Web UI:**
+
+Open your browser and navigate to:
+
+```
+http://localhost:8088
+```
+
+You should see the Cadence Web interface. If you haven't created any domains yet, it will be mostly empty.
+
+**Note:** To stop port-forwarding, press `Ctrl+C` in the terminal where it's running.
 
 ---
 
 ### Step 5: Create a sample domain and run a quick check
 
-Install the Cadence CLI (tctl) locally or exec into the frontend pod. Docs: [Cadence CLI](https://cadenceworkflow.io/docs/cli/)
+A Cadence **domain** is a namespace for workflows. Each domain has its own task lists and workflow execution history. Before running any workflows, you must register at least one domain.
 
-Using kubectl exec:
+This step uses `tctl` (the Cadence CLI) to register a domain. We'll exec into a frontend pod to use the tctl binary that's already installed there. Alternatively, you can [install tctl locally](https://cadenceworkflow.io/docs/cli/).
+
+#### Register a domain
+
+Find a frontend pod name and store it in a variable:
 
 ```bash
-# Find a frontend pod
 POD=$(kubectl get pods -n cadencetest -l app.kubernetes.io/component=frontend -o jsonpath='{.items[0].metadata.name}')
 ```
+
+Register a domain called `sample-domain` with 1 day retention:
+
 ```bash
-# Register a domain
 kubectl exec -n cadencetest -it "$POD" -- \
   tctl --address cadence-release-cadence-frontend:7833 \
   --do sample-domain domain register -rd 1
 ```
+
+The `-rd 1` flag sets the workflow history retention period to 1 day. After this period, closed workflow histories may be deleted.
+
+#### Verify domain creation
+
+List all domains to confirm registration:
+
 ```bash
-# List domains
 kubectl exec -n cadencetest -it "$POD" -- \
   tctl --address cadence-release-cadence-frontend:7833 domain list
 ```
 
-If you enabled Elasticsearch v7 and pointed `hosts` to an active cluster, Cadence will use ES for advanced visibility. Confirm index:
+You should see `sample-domain` in the output with its configuration.
+
+#### Verify Elasticsearch integration (optional)
+
+If you configured Elasticsearch in Step 2, Cadence will use it for advanced visibility. You can verify the Elasticsearch index was created:
+
+**If ES is in your Kubernetes cluster:**
+
+Port-forward to Elasticsearch (in a new terminal):
 
 ```bash
-# Example if you can curl ES from your laptop
-echo "Check your ES index:" && \
-  curl -s http://<ES_HOST>:9200/cadence-visibility
+kubectl port-forward -n elastic-system svc/elasticsearch-master 9200:9200
 ```
+
+Check the Cadence visibility index:
+
+```bash
+curl -s http://localhost:9200/cadence-visibility
+```
+
+**If ES is a managed service with external access:**
+
+```bash
+curl -s http://YOUR-ES-HOSTNAME:9200/cadence-visibility
+```
+
+Replace `YOUR-ES-HOSTNAME` with your actual Elasticsearch endpoint from Step 2.
+
+You should see index metadata including mappings and settings. If you get an error, check the Elasticsearch schema job logs from Step 4.
 
 ---
 
 ### Step 6: Uninstall and cleanup (optional)
 
+When you're done testing, you can remove Cadence and its resources from your cluster.
+
+**Warning:** These operations will delete data. Make sure you don't need any workflow histories or domain configurations before proceeding.
+
+#### Remove the Cadence Helm release
+
+This removes all Cadence pods and services:
+
 ```bash
-# Remove the Helm release
 helm uninstall cadence-release -n cadencetest
-
-# Optionally delete the namespace
-kubectl delete namespace cadencetest
-
-# Optionally delete the GKE cluster (this is destructive!)
-gcloud container clusters delete cadence-gke --quiet
 ```
+
+This command deletes:
+- All Cadence service pods (frontend, history, matching, worker, web)
+- PostgreSQL database (including all workflow data)
+- Kubernetes services and deployments
+
+Note: Persistent volumes may not be automatically deleted depending on your cluster's reclaim policy.
+
+#### Delete the namespace (optional)
+
+If you want to remove all resources in the namespace, including any remaining persistent volume claims:
+
+```bash
+kubectl delete namespace cadencetest
+```
+
+This ensures complete cleanup. The namespace deletion may take a minute to complete.
+
+#### Verify cleanup
+
+Confirm all resources are removed:
+
+```bash
+kubectl get all -n cadencetest
+```
+
+You should see a "No resources found" message or an error that the namespace doesn't exist.
 
 ---
 
 ### Troubleshooting
-- Postgres connection fails: confirm `postgresql.enabled: true` and that `username/password/database` match the `config.persistence.database.sql` section.
-- ES visibility not working: verify `config.persistence.elasticsearch.enabled: true`, version `v7`, and reachable `hosts`/`port`.
-- Pods stuck pending: check node resources and quotas; use `kubectl describe pod`.
-- Jobs failing: inspect logs with `kubectl logs job/<job-name> -n cadencetest`.
 
-### References 
-- Cadence Helm charts repo: [cadence-workflow/cadence-charts](https://github.com/cadence-workflow/cadence-charts.git)
-- Cadence Helm chart README: [Cadence Charts README](https://github.com/cadence-workflow/cadence-charts/tree/main/charts/cadence)
-- Helm docs: [Install Helm](https://helm.sh/docs/intro/install/)
-- GKE docs: [Creating a cluster](https://cloud.google.com/kubernetes-engine/docs/how-to/creating-a-zonal-cluster)
-- Kubernetes docs: [kubectl overview](https://kubernetes.io/docs/reference/kubectl/)
-- Cadence server docs: [Cadence Docs](https://cadenceworkflow.io/docs/)
+This section covers common issues and how to resolve them.
+
+#### Installation Issues
+
+**Pods stuck in Pending state:**
+- **Cause:** Insufficient cluster resources or quota limits
+- **Solution:** Check pod status and events:
+```bash
+kubectl describe pod <pod-name> -n cadencetest
+```
+Look for messages about resource requests or quota exceeded. You may need to scale up your cluster or reduce resource requests in the values file.
+
+**Helm install times out:**
+- **Cause:** Schema jobs taking too long or failing
+- **Solution:** Remove the `--wait` flag and monitor manually:
+```bash
+kubectl get pods -n cadencetest -w
+```
+Check schema job logs for specific errors.
+
+#### Database Issues
+
+**PostgreSQL connection failures:**
+- **Cause:** Misconfigured database credentials or PostgreSQL not running
+- **Solution:** Verify PostgreSQL is running:
+```bash
+kubectl get pods -n cadencetest -l app.kubernetes.io/name=postgresql
+```
+Confirm credentials in your values file match: `postgresql.auth.username/password/database` should match `config.persistence.database.sql.user/password/dbname`.
+
+**Schema jobs failing:**
+- **Cause:** Database connectivity or permission issues
+- **Solution:** Check schema job logs:
+```bash
+kubectl logs job/cadence-release-cadence-schema-server -n cadencetest
+```
+Look for connection errors or SQL execution failures.
+
+#### Elasticsearch Issues
+
+**Elasticsearch visibility not working:**
+- **Cause:** Incorrect ES configuration or unreachable ES cluster
+- **Solution:** Verify ES configuration in your values file:
+  - `config.persistence.elasticsearch.enabled: true`
+  - `version: "v7"`
+  - Correct `hosts` and `port` values
+  - Valid credentials if authentication is enabled
+
+Test connectivity to ES from within the cluster:
+```bash
+kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- curl -v http://YOUR-ES-HOST:9200
+```
+
+**Elasticsearch schema job failing:**
+- **Cause:** Cannot reach ES or incorrect version
+- **Solution:** Check ES schema job logs:
+```bash
+kubectl logs job/cadence-release-cadence-schema-elasticsearch -n cadencetest
+```
+Verify your ES cluster is v7 and reachable from the cluster.
+
+#### Service Access Issues
+
+**Cannot access Web UI at localhost:8088:**
+- **Cause:** Port-forward not running or wrong port
+- **Solution:** Verify port-forward is active:
+```bash
+kubectl port-forward -n cadencetest svc/cadence-release-cadence-web 8088:8088
+```
+Check that the web pod is running:
+```bash
+kubectl get pods -n cadencetest -l app.kubernetes.io/component=web
+```
+
+**tctl commands failing:**
+- **Cause:** Frontend not accessible or wrong address
+- **Solution:** Verify frontend pod is running and port-forward is active:
+```bash
+kubectl get pods -n cadencetest -l app.kubernetes.io/component=frontend
+kubectl port-forward -n cadencetest svc/cadence-release-cadence-frontend 7833:7833
+```
+
+#### General Debugging Commands
+
+View all resources in the namespace:
+```bash
+kubectl get all -n cadencetest
+```
+
+Check pod logs for any service:
+```bash
+kubectl logs -n cadencetest <pod-name> --tail=100
+```
+
+Describe a pod to see events and errors:
+```bash
+kubectl describe pod -n cadencetest <pod-name>
+```
+
+Check Helm release status:
+```bash
+helm status cadence-release -n cadencetest
+```
+
+### References
+
+#### Cadence Resources
+
+- **[Cadence Helm Charts Repository](https://github.com/cadence-workflow/cadence-charts)** - Source repository for the Helm charts used in this guide
+- **[Cadence Helm Chart README](https://github.com/cadence-workflow/cadence-charts/tree/main/charts/cadence)** - Detailed chart configuration options and advanced setup scenarios
+- **[Cadence CLI Documentation](https://cadenceworkflow.io/docs/cli/)** - Command-line tool reference for managing domains and workflows
+
+#### Kubernetes and Helm
+
+- **[Helm Installation](https://helm.sh/docs/intro/install/)** - Official guide to installing Helm on various platforms
+- **[Helm Documentation](https://helm.sh/docs/)** - Complete Helm documentation for chart management
+- **[kubectl Overview](https://kubernetes.io/docs/reference/kubectl/)** - Kubernetes command-line tool reference
+- **[Kubernetes Documentation](https://kubernetes.io/docs/home/)** - Official Kubernetes documentation
+
+#### Google Cloud Platform
+
+- **[Google Cloud SDK Installation](https://cloud.google.com/sdk/docs/install)** - Install and configure gcloud CLI
+- **[Creating a GKE Cluster](https://cloud.google.com/kubernetes-engine/docs/how-to/creating-a-zonal-cluster)** - Guide to creating and managing GKE clusters
+- **[GKE Documentation](https://cloud.google.com/kubernetes-engine/docs)** - Complete GKE documentation
+
+#### Database and Search
+
+- **[PostgreSQL on Kubernetes (Bitnami)](https://artifacthub.io/packages/helm/bitnami/postgresql)** - Bitnami PostgreSQL Helm chart documentation
+- **[Elasticsearch Installation](https://www.elastic.co/guide/en/elasticsearch/reference/7.17/install-elasticsearch.html)** - Elasticsearch v7 installation guide
+- **[Elastic Cloud](https://www.elastic.co/cloud/)** - Managed Elasticsearch service options
