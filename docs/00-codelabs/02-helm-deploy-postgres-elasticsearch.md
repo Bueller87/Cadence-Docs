@@ -122,14 +122,20 @@ Note: If using the remote repo, replace `./charts/cadence` with `cadence/cadence
 
 **Prerequisites:** You need an existing GKE cluster. In many organizations, platform or infra teams manage cluster creation. If you need to create a cluster yourself, see the official documentation: [Creating a GKE cluster](https://cloud.google.com/kubernetes-engine/docs/how-to/creating-a-zonal-cluster)
 
-For this guide, we'll assume your cluster is named `cadence-gke`. Replace this with your actual cluster name in the commands below.
+For this guide, we'll assume your cluster is named `cadence-test-gke-1`. Replace this with your actual cluster name in the commands below.
 
 #### Connect kubectl to your cluster
 
-Get credentials for your existing GKE cluster (replace `cadence-gke` with your cluster name):
+Get credentials for your existing GKE cluster (replace `cadence-test-gke-1` with your cluster name):
 
 ```bash
-gcloud container clusters get-credentials cadence-gke
+gcloud container clusters get-credentials cadence-test-gke-1
+```
+
+**Note:** If this command fails (404, not found), you may need to specify the region or zone where your cluster is located:
+
+```bash
+gcloud container clusters get-credentials cadence-test-gke-1 --region us-central1
 ```
 
 Verify the connection by listing nodes:
@@ -160,52 +166,20 @@ kubectl get namespace cadence-codelab
 
 This step creates a custom Helm values file to configure Cadence with PostgreSQL as the main database and Elasticsearch v7 for advanced visibility features.
 
-#### Prerequisites: Elasticsearch cluster endpoint
+#### Elasticsearch deployment approach
 
-**Important:** You need an existing Elasticsearch v7 cluster. In most organizations, a managed Elasticsearch cluster is provided by your platform or infra team.
+This guide deploys Elasticsearch v7 as part of the same Helm release, alongside Cadence and PostgreSQL. The Cadence Helm chart includes an Elasticsearch subchart that will be automatically deployed and configured.
 
-Get your Elasticsearch endpoint information:
-- **Hostname/URL:** The DNS name or IP address of your ES cluster
-- **Port:** Usually 9200 (HTTP) or 9243 (HTTPS for managed services)
-- **Credentials:** Username and password if authentication is enabled
-- **TLS settings:** Whether HTTPS is required
+**Benefits of this approach:**
+- Simple setup: Everything deployed together in one command
+- Automatic configuration: Service discovery and connectivity handled automatically
+- Good for development, testing, and demos
 
-**Common Elasticsearch scenarios:**
-
-**1. ES running in the same Kubernetes cluster (different namespace):**
-```yaml
-hosts: "your-es-service.your-es-namespace.svc.cluster.local"
-port: 9200
-protocol: "http"
-```
-
-**2. Managed Elasticsearch service (like Elastic Cloud):**
-```yaml
-hosts: "your-cluster-id.es.us-central1.gcp.cloud.es.io"
-port: 9243
-protocol: "https"
-user: "your-username"
-password: "your-password"
-tls:
-  enabled: true
-```
-
-**3. External Elasticsearch host:**
-```yaml
-hosts: "es.yourcompany.com"
-port: 9200
-protocol: "http"
-```
-
-If you don't have Elasticsearch yet, consider these options:
-- Managed: [Elastic Cloud on GCP](https://www.elastic.co/cloud/)
-- Self-managed Helm: [Bitnami Elasticsearch](https://artifacthub.io/packages/helm/bitnami/elasticsearch)
+**For production environments,** you may prefer using a managed Elasticsearch service or a separate deployment. The values file can be easily modified to point to an external ES cluster instead.
 
 #### Create the values file
 
-In the `cadence-charts` directory, create `examples/gke-postgres-es7-values.yaml` with the following content.
-
-**Before using this file, you MUST update the Elasticsearch `hosts` value** (line 24) with your actual ES endpoint:
+In the `cadence-charts` directory, create `examples/gke-postgres-es7-values.yaml` with the following content:
 
 ```yaml
 # Namespace note: install into namespace: cadence-codelab
@@ -231,7 +205,7 @@ config:
       user: ""
       password: ""
       protocol: "http"
-      hosts: "YOUR-ES-HOSTNAME-HERE"  # REPLACE with your actual ES endpoint
+      hosts: "cadence-release-elasticsearch-master.cadence-codelab.svc.cluster.local"
       port: 9200
       visibilityIndex: "cadence-visibility"
       tls:
@@ -256,6 +230,11 @@ dynamicConfig:
 # Deploy Postgres within the same release (Bitnami subchart)
 postgresql:
   enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/postgresql
+    tag: "16.4.0-debian-12-r6"
+    pullPolicy: IfNotPresent
   auth:
     username: cadence
     password: "changeme-strong"
@@ -264,6 +243,28 @@ postgresql:
     persistence:
       enabled: true
       size: 8Gi
+
+# Deploy Elasticsearch within the same release (Bitnami subchart)
+elasticsearch:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/elasticsearch
+    tag: "7.17.23-debian-12-r0"
+    pullPolicy: IfNotPresent
+  master:
+    replicaCount: 1
+    persistence:
+      enabled: true
+      size: 8Gi
+  data:
+    replicaCount: 0
+  coordinating:
+    replicaCount: 0
+  ingest:
+    replicaCount: 0
+  sysctlImage:
+    enabled: false  # Required for GKE Autopilot (disables privileged init container)
 
 # Do NOT deploy Cassandra or MySQL
 cassandra:
@@ -280,15 +281,34 @@ web:
 
 #### What this configuration does
 
+**Image Repository Note:**
+- This configuration uses the `bitnamilegacy` repository for PostgreSQL and Elasticsearch images
+- **Why?** In August 2025, Bitnami transitioned free container images to a legacy repository. These images are stable and working, but won't receive updates
+- For production deployments, consider:
+  - Using managed database services (Cloud SQL, Elastic Cloud)
+  - Hosting your own registry with vetted images
+  - Exploring Bitnami's secure images (requires subscription)
+- **Finding alternative images:** Check [Docker Hub](https://hub.docker.com) for `bitnamilegacy/postgresql` and `bitnamilegacy/elasticsearch` tags, or use official PostgreSQL/Elasticsearch images with appropriate chart modifications
+
 **Database (PostgreSQL):**
-- Deploys a Bitnami PostgreSQL instance as part of this Helm release
+- Deploys PostgreSQL 16.4 from the Bitnami legacy repository
 - Creates two databases: `cadence` (main) and `cadence_visibility`
 - PostgreSQL hostname is auto-generated based on release name and namespace
+- Suitable for development, testing, and demos
 
 **Elasticsearch (Advanced Visibility):**
-- Enables Elasticsearch v7 for advanced workflow search and filtering
-- Configures Cadence to write and read visibility data from ES
-- You must provide your own ES cluster endpoint
+- Deploys Elasticsearch v7.17.23 from the Bitnami legacy repository
+- **Version 7 is required** - Cadence does not support Elasticsearch v8 yet
+- Configured with a single master node (suitable for development and testing)
+- Elasticsearch hostname is auto-generated: `cadence-release-elasticsearch-master.cadence-codelab.svc.cluster.local`
+- Enables advanced workflow search and filtering capabilities
+- **GKE Autopilot compatibility:** Disables privileged sysctl init container (required for Autopilot clusters; not needed for standard GKE clusters)
+
+**Visibility Storage (Important):**
+- Two visibility storage options are configured: PostgreSQL (`cadence_visibility` database) and Elasticsearch (`cadence-visibility` index)
+- The `dynamicConfig` section sets Cadence to **write to and read from Elasticsearch only**
+- PostgreSQL visibility database is created but serves only as a fallback
+- This is standard configuration when using Elasticsearch for advanced visibility features
 
 **Schema Jobs:**
 - Automatically runs database schema setup for PostgreSQL
@@ -303,7 +323,7 @@ web:
 
 ### Step 3: Install Cadence with Helm
 
-This step installs Cadence and its dependencies (PostgreSQL) into your cluster using the values file you created.
+This step installs Cadence and its dependencies (PostgreSQL and Elasticsearch) into your cluster using the values file you created.
 
 #### Add Helm repositories
 
@@ -313,7 +333,7 @@ First, ensure you're in the `cadence-charts` directory:
 cd cadence-charts
 ```
 
-Add the Bitnami repository (needed for the PostgreSQL subchart):
+Add the Bitnami repository (needed for the PostgreSQL and Elasticsearch subcharts):
 
 ```bash
 helm repo add bitnami https://charts.bitnami.com/bitnami
@@ -325,14 +345,22 @@ Update Helm repositories to get the latest chart versions:
 helm repo update
 ```
 
+Build chart dependencies to download the PostgreSQL and Elasticsearch subcharts:
+
+```bash
+helm dependency build ./charts/cadence
+```
+
+This command downloads all required dependency charts into `charts/cadence/charts/`. You'll see output showing each subchart being downloaded and saved.
+
 #### Install Cadence
 
 Install Cadence using the values file from Step 2. This command will:
 - Create a Helm release named `cadence-release`
 - Deploy to the `cadence-codelab` namespace
-- Install PostgreSQL, Cadence services (frontend, history, matching, worker), and Cadence Web
-- Run schema initialization jobs
-- Wait until all resources are ready (typically 2-5 minutes)
+- Install PostgreSQL, Elasticsearch, Cadence services (frontend, history, matching, worker), and Cadence Web
+- Run schema initialization jobs for both PostgreSQL and Elasticsearch
+- Wait until all resources are ready (typically 3-7 minutes)
 
 ```bash
 helm upgrade --install cadence-release ./charts/cadence \
@@ -342,6 +370,8 @@ helm upgrade --install cadence-release ./charts/cadence \
 ```
 
 The `--wait` flag keeps the command running until all pods are ready. You'll see status messages as resources are created.
+
+**Note:** If using GKE Autopilot, you'll see warnings about "autopilot-default-resources-mutator" defaulting CPU resources. This is normal Autopilot behavior and not an error - Autopilot automatically adds resource requests to containers that don't specify them.
 
 #### Verify installation
 
@@ -358,6 +388,7 @@ You should see pods for:
 - `cadence-release-cadence-worker`
 - `cadence-release-cadence-web`
 - `cadence-release-postgresql`
+- `cadence-release-elasticsearch-master`
 - Schema jobs (may show as `Completed` or already gone)
 
 All pods should show `Running` status (or `Completed` for jobs).
@@ -368,7 +399,7 @@ Check services:
 kubectl get svc -n cadence-codelab
 ```
 
-You should see services for frontend, web, and PostgreSQL.
+You should see services for frontend, web, PostgreSQL, and Elasticsearch.
 
 ---
 
@@ -473,14 +504,12 @@ You should see `sample-domain` in the output with its configuration.
 
 #### Verify Elasticsearch integration (optional)
 
-If you configured Elasticsearch in Step 2, Cadence will use it for advanced visibility. You can verify the Elasticsearch index was created:
-
-**If ES is in your Kubernetes cluster:**
+Cadence is configured to use Elasticsearch for advanced visibility. You can verify the Elasticsearch index was created:
 
 Port-forward to Elasticsearch (in a new terminal):
 
 ```bash
-kubectl port-forward -n elastic-system svc/elasticsearch-master 9200:9200
+kubectl port-forward -n cadence-codelab svc/cadence-release-elasticsearch-master 9200:9200
 ```
 
 Check the Cadence visibility index:
@@ -488,14 +517,6 @@ Check the Cadence visibility index:
 ```bash
 curl -s http://localhost:9200/cadence-visibility
 ```
-
-**If ES is a managed service with external access:**
-
-```bash
-curl -s http://YOUR-ES-HOSTNAME:9200/cadence-visibility
-```
-
-Replace `YOUR-ES-HOSTNAME` with your actual Elasticsearch endpoint from Step 2.
 
 You should see index metadata including mappings and settings. If you get an error, check the Elasticsearch schema job logs from Step 4.
 
@@ -518,6 +539,7 @@ helm uninstall cadence-release -n cadence-codelab
 This command deletes:
 - All Cadence service pods (frontend, history, matching, worker, web)
 - PostgreSQL database (including all workflow data)
+- Elasticsearch cluster (including all visibility data)
 - Kubernetes services and deployments
 
 Note: Persistent volumes may not be automatically deleted depending on your cluster's reclaim policy.
@@ -549,6 +571,13 @@ You should see a "No resources found" message or an error that the namespace doe
 This section covers common issues and how to resolve them.
 
 #### Installation Issues
+
+**Image pull errors (ImagePullBackOff):**
+- **Cause:** Docker image tag doesn't exist or repository access issues
+- **Solution:** Verify the image tags in your values file match available images in the `bitnamilegacy` repository
+- Check [Docker Hub bitnamilegacy/postgresql](https://hub.docker.com/r/bitnamilegacy/postgresql/tags) for PostgreSQL tags
+- Check [Docker Hub bitnamilegacy/elasticsearch](https://hub.docker.com/r/bitnamilegacy/elasticsearch/tags) for Elasticsearch tags
+- If images are unavailable, you may need to use alternative repositories or managed services
 
 **Pods stuck in Pending state:**
 - **Cause:** Insufficient cluster resources or quota limits
@@ -587,19 +616,18 @@ Look for connection errors or SQL execution failures.
 #### Elasticsearch Issues
 
 **Elasticsearch visibility not working:**
-- **Cause:** Incorrect ES configuration or unreachable ES cluster
-- **Solution:** Verify ES configuration in your values file:
-  - `config.persistence.elasticsearch.enabled: true`
-  - `version: "v7"`
-  - Correct `hosts` and `port` values
-  - Valid credentials if authentication is enabled
+- **Cause:** Elasticsearch pod not running or unreachable
+- **Solution:** Verify Elasticsearch pod is running:
+```bash
+kubectl get pods -n cadence-codelab -l app.kubernetes.io/name=elasticsearch
+```
 
 Test connectivity to ES from within the cluster:
 ```bash
 kubectl run -it --rm debug \
   --image=curlimages/curl \
   --restart=Never \
-  -- curl -v http://YOUR-ES-HOST:9200
+  -- curl -v http://cadence-release-elasticsearch-master.cadence-codelab.svc.cluster.local:9200
 ```
 
 **Elasticsearch schema job failing:**
