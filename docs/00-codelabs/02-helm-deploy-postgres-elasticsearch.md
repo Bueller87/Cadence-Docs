@@ -184,6 +184,11 @@ In the `cadence-charts` directory, create `examples/gke-postgres-es7-values.yaml
 ```yaml
 # Namespace note: install into namespace: cadence-codelab
 
+# Allow Bitnami charts to use legacy repository images
+global:
+  security:
+    allowInsecureImages: true
+
 # Force Cadence to use PostgreSQL for main DB
 config:
   persistence:
@@ -200,7 +205,7 @@ config:
           enabled: false
           sslMode: ""
     elasticsearch:
-      enabled: true
+      enabled: false
       version: "v7"
       user: ""
       password: ""
@@ -216,16 +221,16 @@ schema:
   serverJob:
     enabled: true
   elasticSearchJob:
-    enabled: true
+    enabled: false
 
-# Ensure Cadence uses Elasticsearch for advanced visibility
-# See values.yaml dynamicConfig keys in the chart
-dynamicConfig:
-  values:
-    system.writeVisibilityStoreName:
-      - value: "es-visibility"
-    system.readVisibilityStoreName:
-      - value: "es-visibility"
+# Use PostgreSQL for visibility (basic visibility)
+# Comment out Elasticsearch visibility config when ES is disabled
+# dynamicConfig:
+#   values:
+#     system.writeVisibilityStoreName:
+#       - value: "es-visibility"
+#     system.readVisibilityStoreName:
+#       - value: "es-visibility"
 
 # Deploy Postgres within the same release (Bitnami subchart)
 postgresql:
@@ -246,7 +251,7 @@ postgresql:
 
 # Deploy Elasticsearch within the same release (Bitnami subchart)
 elasticsearch:
-  enabled: true
+  enabled: false
   image:
     registry: docker.io
     repository: bitnamilegacy/elasticsearch
@@ -257,6 +262,13 @@ elasticsearch:
     persistence:
       enabled: true
       size: 8Gi
+    heapSize: "512m"  # Increase heap for stability
+    podSecurityContext:
+      fsGroup: 1001  # Bitnami Elasticsearch user group
+      runAsUser: 1001  # Bitnami Elasticsearch user
+    containerSecurityContext:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
   data:
     replicaCount: 0
   coordinating:
@@ -265,6 +277,12 @@ elasticsearch:
     replicaCount: 0
   sysctlImage:
     enabled: false  # Required for GKE Autopilot (disables privileged init container)
+  config:
+    bootstrap.memory_lock: "false"  # Disable memory lock check for Autopilot
+    path.data: "/bitnami/elasticsearch/data"  # Override data path to match volume mount
+  extraEnvVars:
+    - name: "ES_JAVA_OPTS"
+      value: "-Xms512m -Xmx512m"  # Match heapSize
 
 # Do NOT deploy Cassandra or MySQL
 cassandra:
@@ -280,6 +298,11 @@ web:
 ```
 
 #### What this configuration does
+
+**Global Security Setting:**
+- `allowInsecureImages: true` - Required to use images from the `bitnamilegacy` repository
+- Bitnami charts validate that images come from approved repositories; legacy images are flagged as "unrecognized"
+- This setting bypasses the validation check
 
 **Image Repository Note:**
 - This configuration uses the `bitnamilegacy` repository for PostgreSQL and Elasticsearch images
@@ -302,7 +325,12 @@ web:
 - Configured with a single master node (suitable for development and testing)
 - Elasticsearch hostname is auto-generated: `cadence-release-elasticsearch-master.cadence-codelab.svc.cluster.local`
 - Enables advanced workflow search and filtering capabilities
-- **GKE Autopilot compatibility:** Disables privileged sysctl init container (required for Autopilot clusters; not needed for standard GKE clusters)
+- **GKE Autopilot compatibility:**
+  - `sysctlImage.enabled: false` - Disables privileged init container
+  - `bootstrap.memory_lock: false` - Disables memory lock bootstrap check
+  - `heapSize: 512m` - Increased from default 128m for better stability
+  - Security contexts configured to run as non-root user (UID 1001)
+  - These settings allow Elasticsearch to run within Autopilot's security constraints
 
 **Visibility Storage (Important):**
 - Two visibility storage options are configured: PostgreSQL (`cadence_visibility` database) and Elasticsearch (`cadence-visibility` index)
@@ -382,11 +410,11 @@ kubectl get pods -n cadence-codelab
 ```
 
 You should see pods for:
-- `cadence-release-cadence-frontend`
-- `cadence-release-cadence-history`
-- `cadence-release-cadence-matching`
-- `cadence-release-cadence-worker`
-- `cadence-release-cadence-web`
+- `cadence-release-frontend`
+- `cadence-release-history`
+- `cadence-release-matching`
+- `cadence-release-worker`
+- `cadence-release-web`
 - `cadence-release-postgresql`
 - `cadence-release-elasticsearch-master`
 - Schema jobs (may show as `Completed` or already gone)
@@ -420,13 +448,13 @@ You should see jobs with `COMPLETIONS` showing `1/1`. If jobs are still present,
 View PostgreSQL schema job logs:
 
 ```bash
-kubectl logs job/cadence-release-cadence-schema-server -n cadence-codelab --tail=200
+kubectl logs job/cadence-release-schema-postgresql -n cadence-codelab --tail=200
 ```
 
 View Elasticsearch schema job logs:
 
 ```bash
-kubectl logs job/cadence-release-cadence-schema-elasticsearch -n cadence-codelab --tail=200
+kubectl logs job/cadence-release-schema-elasticsearch -n cadence-codelab --tail=200
 ```
 
 Look for messages indicating successful schema creation. If you see errors, they typically relate to connectivity issues with PostgreSQL or Elasticsearch.
@@ -438,7 +466,7 @@ Port-forwarding creates a tunnel from your local machine to services running in 
 **Port-forward the Cadence frontend** (for CLI access):
 
 ```bash
-kubectl port-forward -n cadence-codelab svc/cadence-release-cadence-frontend 7833:7833
+kubectl port-forward -n cadence-codelab svc/cadence-release-frontend 7833:7833
 ```
 
 This command runs in the foreground. Keep it running and open a new terminal for the next command.
@@ -446,7 +474,7 @@ This command runs in the foreground. Keep it running and open a new terminal for
 **In a new terminal, port-forward the Cadence Web UI:**
 
 ```bash
-kubectl port-forward -n cadence-codelab svc/cadence-release-cadence-web 8088:8088
+kubectl port-forward -n cadence-codelab svc/cadence-release-web 8088:8088
 ```
 
 This also runs in the foreground. Keep both port-forwards running.
@@ -485,7 +513,7 @@ Register a domain called `sample-domain` with 1 day retention:
 
 ```bash
 kubectl exec -n cadence-codelab -it "$POD" -- \
-  tctl --address cadence-release-cadence-frontend:7833 \
+  tctl --address cadence-release-frontend:7833 \
   --do sample-domain domain register -rd 1
 ```
 
@@ -497,7 +525,7 @@ List all domains to confirm registration:
 
 ```bash
 kubectl exec -n cadence-codelab -it "$POD" -- \
-  tctl --address cadence-release-cadence-frontend:7833 domain list
+  tctl --address cadence-release-frontend:7833 domain list
 ```
 
 You should see `sample-domain` in the output with its configuration.
@@ -528,9 +556,11 @@ When you're done testing, you can remove Cadence and its resources from your clu
 
 **Warning:** These operations will delete data. Make sure you don't need any workflow histories or domain configurations before proceeding.
 
-#### Remove the Cadence Helm release
+Choose one of the following cleanup options:
 
-This removes all Cadence pods and services:
+#### Option A: Remove only Cadence (keep the namespace)
+
+Use this if you want to keep the namespace for other workloads:
 
 ```bash
 helm uninstall cadence-release -n cadence-codelab
@@ -544,15 +574,22 @@ This command deletes:
 
 Note: Persistent volumes may not be automatically deleted depending on your cluster's reclaim policy.
 
-#### Delete the namespace (optional)
+#### Option B: Complete cleanup (delete the namespace)
 
-If you want to remove all resources in the namespace, including any remaining persistent volume claims:
+Use this for complete removal of everything:
 
 ```bash
 kubectl delete namespace cadence-codelab
 ```
 
-This ensures complete cleanup. The namespace deletion may take a minute to complete.
+This deletes:
+- Everything from Option A
+- All remaining persistent volume claims and their data
+- The namespace itself
+
+**Note:** If using Option B, you don't need to run `helm uninstall` first. Deleting the namespace removes everything including the Helm release.
+
+The namespace deletion may take a minute to complete.
 
 #### Verify cleanup
 
@@ -609,7 +646,7 @@ Confirm credentials in your values file match: `postgresql.auth.username/passwor
 - **Cause:** Database connectivity or permission issues
 - **Solution:** Check schema job logs:
 ```bash
-kubectl logs job/cadence-release-cadence-schema-server -n cadence-codelab
+kubectl logs job/cadence-release-schema-server -n cadence-codelab
 ```
 Look for connection errors or SQL execution failures.
 
@@ -634,7 +671,7 @@ kubectl run -it --rm debug \
 - **Cause:** Cannot reach ES or incorrect version
 - **Solution:** Check ES schema job logs:
 ```bash
-kubectl logs job/cadence-release-cadence-schema-elasticsearch -n cadence-codelab
+kubectl logs job/cadence-release-schema-elasticsearch -n cadence-codelab
 ```
 Verify your ES cluster is v7 and reachable from the cluster.
 
@@ -644,7 +681,7 @@ Verify your ES cluster is v7 and reachable from the cluster.
 - **Cause:** Port-forward not running or wrong port
 - **Solution:** Verify port-forward is active:
 ```bash
-kubectl port-forward -n cadence-codelab svc/cadence-release-cadence-web 8088:8088
+kubectl port-forward -n cadence-codelab svc/cadence-release-web 8088:8088
 ```
 Check that the web pod is running:
 ```bash
@@ -656,7 +693,7 @@ kubectl get pods -n cadence-codelab -l app.kubernetes.io/component=web
 - **Solution:** Verify frontend pod is running and port-forward is active:
 ```bash
 kubectl get pods -n cadence-codelab -l app.kubernetes.io/component=frontend
-kubectl port-forward -n cadence-codelab svc/cadence-release-cadence-frontend 7833:7833
+kubectl port-forward -n cadence-codelab svc/cadence-release-frontend 7833:7833
 ```
 
 #### General Debugging Commands
