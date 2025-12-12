@@ -5,7 +5,7 @@ permalink: /docs/codelabs/helm-deploy-postgres-elasticsearch
 ---
 ## Codelab: Deploy Cadence with Helm on GKE
 
-Ready to deploy Cadence? This codelab walks you through a complete, production-ready deployment using official Helm charts—no custom scripting required. Whether you're new to Kubernetes or an experienced platform engineer, you'll have Cadence running on GKE with PostgreSQL and Elasticsearch in under 30 minutes.
+Ready to deploy Cadence? This codelab walks you through a complete, production-ready deployment using official Helm charts—no custom scripting required. Whether you're new to Kubernetes or an experienced platform engineer, you'll have Cadence running on GKE with PostgreSQL, Kafka, and Elasticsearch in under 30 minutes.
 
 We've done the heavy lifting: the Helm charts are tested, maintained, and ready to use. Just follow the steps, and you'll have a fully functional Cadence cluster with advanced visibility features.
 
@@ -22,6 +22,7 @@ We've done the heavy lifting: the Helm charts are tested, maintained, and ready 
 ### What you'll build
 - A complete Cadence deployment (frontend, history, matching, worker)
 - PostgreSQL as the main persistence store
+- Kafka for visibility event streaming
 - Elasticsearch v7 for advanced visibility
 - Cadence Web UI for workflow monitoring
 
@@ -151,153 +152,52 @@ You should see a list of nodes in your cluster with a `Ready` status.
 Namespaces provide logical isolation within the cluster:
 
 ```bash
-kubectl create namespace cadence-codelab
+kubectl create namespace cadence-postgres-es7
 ```
 
 Verify the namespace was created:
 
 ```bash
-kubectl get namespace cadence-codelab
+kubectl get namespace cadence-postgres-es7
 ```
 
 ---
 
-### Step 2: Prepare a Helm values file for PostgreSQL + Elasticsearch v7
+### Step 2: Use the official Helm values file for PostgreSQL + Elasticsearch v7 + Kafka
 
-This step creates a custom Helm values file to configure Cadence with PostgreSQL as the main database and Elasticsearch v7 for advanced visibility features.
+This step uses the official example values file that configures Cadence with PostgreSQL as the main database, Kafka for visibility event streaming, and Elasticsearch v7 for advanced visibility features.
 
-#### Elasticsearch deployment approach
+#### Deployment architecture
 
-This guide deploys Elasticsearch v7 as part of the same Helm release, alongside Cadence and PostgreSQL. The Cadence Helm chart includes an Elasticsearch subchart that will be automatically deployed and configured.
+This guide deploys a complete visibility stack as part of the same Helm release:
+- **PostgreSQL** - Main persistence store for workflow data
+- **Kafka** - Event streaming for visibility events (required for Elasticsearch integration)
+- **Elasticsearch v7** - Advanced visibility search and filtering
+- **Cadence services** - Frontend, history, matching, worker
+
+The Cadence Helm chart includes subcharts for all dependencies, so everything is deployed and configured together automatically.
 
 **Benefits of this approach:**
 - Simple setup: Everything deployed together in one command
 - Automatic configuration: Service discovery and connectivity handled automatically
-- Good for development, testing, and demos
+- Production-ready architecture: Real event streaming with Kafka
+- Good for development, testing, and production environments
 
-**For production environments,** you may prefer using a managed Elasticsearch service or a separate deployment. The values file can be easily modified to point to an external ES cluster instead.
+**For production environments,** you may prefer using managed services (Cloud SQL, Elastic Cloud, Confluent Cloud) or separate deployments. The values file can be easily modified to point to external services instead.
 
-#### Create the values file
+#### View the official values file
 
-In the `cadence-charts` directory, create `examples/gke-postgres-es7-values.yaml` with the following content:
+The `cadence-charts` repository includes a tested example file for this exact deployment. You can view it:
 
-```yaml
-# Namespace note: install into namespace: cadence-codelab
-
-# Allow Bitnami charts to use legacy repository images
-global:
-  security:
-    allowInsecureImages: true
-
-# Force Cadence to use PostgreSQL for main DB
-config:
-  persistence:
-    database:
-      driver: "postgres"
-      sql:
-        hosts: "cadence-release-postgresql.cadence-codelab.svc.cluster.local"
-        port: 5432
-        dbname: "cadence"
-        visibilityDbname: "cadence_visibility"
-        user: "cadence"
-        password: "changeme-strong"
-        tls:
-          enabled: false
-          sslMode: ""
-    elasticsearch:
-      enabled: false
-      version: "v7"
-      user: ""
-      password: ""
-      protocol: "http"
-      hosts: "cadence-release-elasticsearch-master.cadence-codelab.svc.cluster.local"
-      port: 9200
-      visibilityIndex: "cadence-visibility"
-      tls:
-        enabled: false
-
-# Enable Cadence schema jobs
-schema:
-  serverJob:
-    enabled: true
-  elasticSearchJob:
-    enabled: false
-
-# Use PostgreSQL for visibility (basic visibility)
-# Comment out Elasticsearch visibility config when ES is disabled
-# dynamicConfig:
-#   values:
-#     system.writeVisibilityStoreName:
-#       - value: "es-visibility"
-#     system.readVisibilityStoreName:
-#       - value: "es-visibility"
-
-# Deploy Postgres within the same release (Bitnami subchart)
-postgresql:
-  enabled: true
-  image:
-    registry: docker.io
-    repository: bitnamilegacy/postgresql
-    tag: "16.4.0-debian-12-r6"
-    pullPolicy: IfNotPresent
-  auth:
-    username: cadence
-    password: "changeme-strong"
-    database: cadence
-  primary:
-    persistence:
-      enabled: true
-      size: 8Gi
-
-# Deploy Elasticsearch within the same release (Bitnami subchart)
-elasticsearch:
-  enabled: false
-  image:
-    registry: docker.io
-    repository: bitnamilegacy/elasticsearch
-    tag: "7.17.23-debian-12-r0"
-    pullPolicy: IfNotPresent
-  master:
-    replicaCount: 1
-    persistence:
-      enabled: true
-      size: 8Gi
-    heapSize: "512m"  # Increase heap for stability
-    podSecurityContext:
-      fsGroup: 1001  # Bitnami Elasticsearch user group
-      runAsUser: 1001  # Bitnami Elasticsearch user
-    containerSecurityContext:
-      runAsNonRoot: true
-      allowPrivilegeEscalation: false
-  data:
-    replicaCount: 0
-  coordinating:
-    replicaCount: 0
-  ingest:
-    replicaCount: 0
-  sysctlImage:
-    enabled: false  # Required for GKE Autopilot (disables privileged init container)
-  config:
-    bootstrap.memory_lock: "false"  # Disable memory lock check for Autopilot
-    path.data: "/bitnami/elasticsearch/data"  # Override data path to match volume mount
-  extraEnvVars:
-    - name: "ES_JAVA_OPTS"
-      value: "-Xms512m -Xmx512m"  # Match heapSize
-
-# Do NOT deploy Cassandra or MySQL
-cassandra:
-  enabled: false
-mysql:
-  enabled: false
-
-# Cadence Web UI config (ClusterIP by default)
-web:
-  replicas: 1
-  service:
-    type: ClusterIP
+```bash
+cat charts/cadence/examples/values.postgres-es7.yaml
 ```
 
+This file is maintained by the Cadence team and includes all necessary configuration for PostgreSQL, Kafka (KRaft mode), and Elasticsearch with GKE Autopilot compatibility.
+
 #### What this configuration does
+
+The official values file configures a complete Cadence deployment with three stateful services: PostgreSQL, Kafka, and Elasticsearch. Here's what each component does:
 
 **Global Security Setting:**
 - `allowInsecureImages: true` - Required to use images from the `bitnamilegacy` repository
@@ -305,38 +205,54 @@ web:
 - This setting bypasses the validation check
 
 **Image Repository Note:**
-- This configuration uses the `bitnamilegacy` repository for PostgreSQL and Elasticsearch images
+- This configuration uses the `bitnamilegacy` repository for PostgreSQL, Kafka, and Elasticsearch images
 - **Why?** In August 2025, Bitnami transitioned free container images to a legacy repository. These images are stable and working, but won't receive updates
 - For production deployments, consider:
-  - Using managed database services (Cloud SQL, Elastic Cloud)
+  - Using managed services (Cloud SQL, Confluent Cloud, Elastic Cloud)
   - Hosting your own registry with vetted images
   - Exploring Bitnami's secure images (requires subscription)
-- **Finding alternative images:** Check [Docker Hub](https://hub.docker.com) for `bitnamilegacy/postgresql` and `bitnamilegacy/elasticsearch` tags, or use official PostgreSQL/Elasticsearch images with appropriate chart modifications
+- **Finding alternative images:** Check [Docker Hub](https://hub.docker.com) for `bitnamilegacy/postgresql`, `bitnamilegacy/kafka`, and `bitnamilegacy/elasticsearch` tags
 
 **Database (PostgreSQL):**
 - Deploys PostgreSQL 16.4 from the Bitnami legacy repository
 - Creates two databases: `cadence` (main) and `cadence_visibility`
-- PostgreSQL hostname is auto-generated based on release name and namespace
-- Suitable for development, testing, and demos
+- PostgreSQL hostname: `cadence-release-postgresql.cadence-postgres-es7.svc.cluster.local`
+- 8Gi persistent volume for data storage
+- Suitable for development, testing, and production
+
+**Kafka (Event Streaming):**
+- **Required for Elasticsearch integration** - Cadence streams visibility events to Kafka, which Elasticsearch consumes
+- Deploys Kafka 3.8.0 in **KRaft mode** (Kafka Raft - no ZooKeeper required)
+- Single controller and single broker configuration (suitable for development and testing)
+- Kafka hostname: `cadence-release-kafka.cadence-postgres-es7.svc.cluster.local`
+- 8Gi persistent volumes for both controller and broker
+- **GKE Autopilot compatibility:**
+  - `sysctlImage.enabled: false` - Disables privileged init container
+  - Security contexts configured to run as non-root user (UID 1001)
+  - Explicit CPU/memory resource requests and limits
+- **KRaft mode benefits:**
+  - Simplified architecture without ZooKeeper dependency
+  - Faster startup and better performance
+  - Kafka's modern, recommended deployment mode
 
 **Elasticsearch (Advanced Visibility):**
 - Deploys Elasticsearch v7.17.23 from the Bitnami legacy repository
 - **Version 7 is required** - Cadence does not support Elasticsearch v8 yet
-- Configured with a single master node (suitable for development and testing)
-- Elasticsearch hostname is auto-generated: `cadence-release-elasticsearch-master.cadence-codelab.svc.cluster.local`
+- Configured with a single master node that handles all roles (suitable for development and testing)
+- Elasticsearch hostname: `cadence-release-elasticsearch.cadence-postgres-es7.svc.cluster.local`
 - Enables advanced workflow search and filtering capabilities
+- 8Gi persistent volume for indices
 - **GKE Autopilot compatibility:**
   - `sysctlImage.enabled: false` - Disables privileged init container
-  - `bootstrap.memory_lock: false` - Disables memory lock bootstrap check
-  - `heapSize: 512m` - Increased from default 128m for better stability
-  - Security contexts configured to run as non-root user (UID 1001)
-  - These settings allow Elasticsearch to run within Autopilot's security constraints
+  - Explicit CPU/memory resource requests (1 CPU, 1024Mi) and limits (2 CPU, 2048Mi)
+  - Security contexts for non-root execution
 
-**Visibility Storage (Important):**
-- Two visibility storage options are configured: PostgreSQL (`cadence_visibility` database) and Elasticsearch (`cadence-visibility` index)
-- The `dynamicConfig` section sets Cadence to **write to and read from Elasticsearch only**
-- PostgreSQL visibility database is created but serves only as a fallback
-- This is standard configuration when using Elasticsearch for advanced visibility features
+**Visibility Architecture:**
+- Cadence workflows generate visibility events
+- Events are streamed to Kafka topics
+- Elasticsearch consumes events from Kafka and indexes them
+- The `dynamicConfig` section configures Cadence to **write to and read from Elasticsearch** (`es-visibility`)
+- This enables advanced workflow queries like filtering by custom fields, full-text search, and complex date ranges
 
 **Schema Jobs:**
 - Automatically runs database schema setup for PostgreSQL
@@ -351,7 +267,7 @@ web:
 
 ### Step 3: Install Cadence with Helm
 
-This step installs Cadence and its dependencies (PostgreSQL and Elasticsearch) into your cluster using the values file you created.
+This step installs Cadence and its dependencies (PostgreSQL, Kafka, and Elasticsearch) into your cluster using the official values file.
 
 #### Add Helm repositories
 
@@ -361,7 +277,7 @@ First, ensure you're in the `cadence-charts` directory:
 cd cadence-charts
 ```
 
-Add the Bitnami repository (needed for the PostgreSQL and Elasticsearch subcharts):
+Add the Bitnami repository (needed for the PostgreSQL, Kafka, and Elasticsearch subcharts):
 
 ```bash
 helm repo add bitnami https://charts.bitnami.com/bitnami
@@ -373,7 +289,7 @@ Update Helm repositories to get the latest chart versions:
 helm repo update
 ```
 
-Build chart dependencies to download the PostgreSQL and Elasticsearch subcharts:
+Build chart dependencies to download the PostgreSQL, Kafka, and Elasticsearch subcharts:
 
 ```bash
 helm dependency build ./charts/cadence
@@ -383,17 +299,17 @@ This command downloads all required dependency charts into `charts/cadence/chart
 
 #### Install Cadence
 
-Install Cadence using the values file from Step 2. This command will:
+Install Cadence using the official values file from Step 2. This command will:
 - Create a Helm release named `cadence-release`
-- Deploy to the `cadence-codelab` namespace
-- Install PostgreSQL, Elasticsearch, Cadence services (frontend, history, matching, worker), and Cadence Web
+- Deploy to the `cadence-postgres-es7` namespace
+- Install PostgreSQL, Kafka, Elasticsearch, Cadence services (frontend, history, matching, worker), and Cadence Web
 - Run schema initialization jobs for both PostgreSQL and Elasticsearch
-- Wait until all resources are ready (typically 3-7 minutes)
+- Wait until all resources are ready (typically 5-10 minutes with Kafka and Elasticsearch)
 
 ```bash
 helm upgrade --install cadence-release ./charts/cadence \
-  --namespace cadence-codelab \
-  -f examples/gke-postgres-es7-values.yaml \
+  --namespace cadence-postgres-es7 \
+  -f charts/cadence/examples/values.postgres-es7.yaml \
   --wait
 ```
 
@@ -406,7 +322,7 @@ The `--wait` flag keeps the command running until all pods are ready. You'll see
 Check that all pods are running:
 
 ```bash
-kubectl get pods -n cadence-codelab
+kubectl get pods -n cadence-postgres-es7
 ```
 
 You should see pods for:
@@ -416,6 +332,8 @@ You should see pods for:
 - `cadence-release-worker`
 - `cadence-release-web`
 - `cadence-release-postgresql`
+- `cadence-release-kafka-controller`
+- `cadence-release-kafka-broker`
 - `cadence-release-elasticsearch-master`
 - Schema jobs (may show as `Completed` or already gone)
 
@@ -424,10 +342,10 @@ All pods should show `Running` status (or `Completed` for jobs).
 Check services:
 
 ```bash
-kubectl get svc -n cadence-codelab
+kubectl get svc -n cadence-postgres-es7
 ```
 
-You should see services for frontend, web, PostgreSQL, and Elasticsearch.
+You should see services for frontend, web, PostgreSQL, Kafka, and Elasticsearch.
 
 ---
 
@@ -440,7 +358,7 @@ This step confirms that database schemas were initialized correctly and sets up 
 Schema jobs run once during installation to set up database tables and Elasticsearch indices. Check if the jobs completed successfully:
 
 ```bash
-kubectl get jobs -n cadence-codelab
+kubectl get jobs -n cadence-postgres-es7
 ```
 
 You should see jobs with `COMPLETIONS` showing `1/1`. If jobs are still present, check their logs:
@@ -448,13 +366,13 @@ You should see jobs with `COMPLETIONS` showing `1/1`. If jobs are still present,
 View PostgreSQL schema job logs:
 
 ```bash
-kubectl logs job/cadence-release-schema-postgresql -n cadence-codelab --tail=200
+kubectl logs job/cadence-release-schema-postgresql -n cadence-postgres-es7 --tail=200
 ```
 
 View Elasticsearch schema job logs:
 
 ```bash
-kubectl logs job/cadence-release-schema-elasticsearch -n cadence-codelab --tail=200
+kubectl logs job/cadence-release-schema-elasticsearch -n cadence-postgres-es7 --tail=200
 ```
 
 Look for messages indicating successful schema creation. If you see errors, they typically relate to connectivity issues with PostgreSQL or Elasticsearch.
@@ -466,7 +384,7 @@ Port-forwarding creates a tunnel from your local machine to services running in 
 **Port-forward the Cadence frontend** (for CLI access):
 
 ```bash
-kubectl port-forward -n cadence-codelab svc/cadence-release-frontend 7833:7833
+kubectl port-forward -n cadence-postgres-es7 svc/cadence-release-frontend 7833:7833
 ```
 
 This command runs in the foreground. Keep it running and open a new terminal for the next command.
@@ -474,7 +392,7 @@ This command runs in the foreground. Keep it running and open a new terminal for
 **In a new terminal, port-forward the Cadence Web UI:**
 
 ```bash
-kubectl port-forward -n cadence-codelab svc/cadence-release-web 8088:8088
+kubectl port-forward -n cadence-postgres-es7 svc/cadence-release-web 8088:8088
 ```
 
 This also runs in the foreground. Keep both port-forwards running.
@@ -497,14 +415,14 @@ You should see the Cadence Web interface. If you haven't created any domains yet
 
 A Cadence **domain** is a namespace for workflows. Each domain has its own task lists and workflow execution history. Before running any workflows, you must register at least one domain.
 
-This step uses `tctl` (the Cadence CLI) to register a domain. We'll exec into a frontend pod to use the tctl binary that's already installed there. Alternatively, you can [install tctl locally](https://cadenceworkflow.io/docs/cli/).
+This step uses the Cadence CLI to register a domain. We'll exec into a frontend pod to use the `cadence` CLI binary that's already installed there. Alternatively, you can [install the Cadence CLI locally](https://cadenceworkflow.io/docs/cli/).
 
 #### Register a domain
 
 Find a frontend pod name and store it in a variable:
 
 ```bash
-POD=$(kubectl get pods -n cadence-codelab \
+POD=$(kubectl get pods -n cadence-postgres-es7 \
   -l app.kubernetes.io/component=frontend \
   -o jsonpath='{.items[0].metadata.name}')
 ```
@@ -512,8 +430,8 @@ POD=$(kubectl get pods -n cadence-codelab \
 Register a domain called `sample-domain` with 1 day retention:
 
 ```bash
-kubectl exec -n cadence-codelab -it "$POD" -- \
-  tctl --address cadence-release-frontend:7833 \
+kubectl exec -n cadence-postgres-es7 -it "$POD" -- \
+  cadence --address cadence-release-frontend:7833 \
   --do sample-domain domain register -rd 1
 ```
 
@@ -524,11 +442,31 @@ The `-rd 1` flag sets the workflow history retention period to 1 day. After this
 List all domains to confirm registration:
 
 ```bash
-kubectl exec -n cadence-codelab -it "$POD" -- \
-  tctl --address cadence-release-frontend:7833 domain list
+kubectl exec -n cadence-postgres-es7 -it "$POD" -- \
+  cadence --address cadence-release-frontend:7833 domain list
 ```
 
 You should see `sample-domain` in the output with its configuration.
+
+#### Verify Kafka integration (optional)
+
+Kafka is required for streaming visibility events to Elasticsearch. You can verify Kafka pods are running:
+
+Check Kafka pod status:
+
+```bash
+kubectl get pods -n cadence-postgres-es7 -l app.kubernetes.io/name=kafka
+```
+
+You should see both `cadence-release-kafka-controller` and `cadence-release-kafka-broker` in `Running` status.
+
+View Kafka controller logs to verify KRaft initialization:
+
+```bash
+kubectl logs -n cadence-postgres-es7 -l app.kubernetes.io/component=controller --tail=50
+```
+
+Look for messages indicating successful KRaft cluster formation and controller election.
 
 #### Verify Elasticsearch integration (optional)
 
@@ -537,7 +475,7 @@ Cadence is configured to use Elasticsearch for advanced visibility. You can veri
 Port-forward to Elasticsearch (in a new terminal):
 
 ```bash
-kubectl port-forward -n cadence-codelab svc/cadence-release-elasticsearch-master 9200:9200
+kubectl port-forward -n cadence-postgres-es7 svc/cadence-release-elasticsearch 9200:9200
 ```
 
 Check the Cadence visibility index:
@@ -546,7 +484,7 @@ Check the Cadence visibility index:
 curl -s http://localhost:9200/cadence-visibility
 ```
 
-You should see index metadata including mappings and settings. If you get an error, check the Elasticsearch schema job logs from Step 4.
+You should see index metadata including mappings and settings. If you get an error, check the Elasticsearch schema job logs from earlier in this step.
 
 ---
 
@@ -563,12 +501,13 @@ Choose one of the following cleanup options:
 Use this if you want to keep the namespace for other workloads:
 
 ```bash
-helm uninstall cadence-release -n cadence-codelab
+helm uninstall cadence-release -n cadence-postgres-es7
 ```
 
 This command deletes:
 - All Cadence service pods (frontend, history, matching, worker, web)
 - PostgreSQL database (including all workflow data)
+- Kafka cluster (controller and broker with all event data)
 - Elasticsearch cluster (including all visibility data)
 - Kubernetes services and deployments
 
@@ -579,12 +518,12 @@ Note: Persistent volumes may not be automatically deleted depending on your clus
 Use this for complete removal of everything:
 
 ```bash
-kubectl delete namespace cadence-codelab
+kubectl delete namespace cadence-postgres-es7
 ```
 
 This deletes:
 - Everything from Option A
-- All remaining persistent volume claims and their data
+- All remaining persistent volume claims and their data (PostgreSQL, Kafka controller, Kafka broker, Elasticsearch)
 - The namespace itself
 
 **Note:** If using Option B, you don't need to run `helm uninstall` first. Deleting the namespace removes everything including the Helm release.
@@ -596,7 +535,7 @@ The namespace deletion may take a minute to complete.
 Confirm all resources are removed:
 
 ```bash
-kubectl get all -n cadence-codelab
+kubectl get all -n cadence-postgres-es7
 ```
 
 You should see a "No resources found" message or an error that the namespace doesn't exist.
@@ -613,6 +552,7 @@ This section covers common issues and how to resolve them.
 - **Cause:** Docker image tag doesn't exist or repository access issues
 - **Solution:** Verify the image tags in your values file match available images in the `bitnamilegacy` repository
 - Check [Docker Hub bitnamilegacy/postgresql](https://hub.docker.com/r/bitnamilegacy/postgresql/tags) for PostgreSQL tags
+- Check [Docker Hub bitnamilegacy/kafka](https://hub.docker.com/r/bitnamilegacy/kafka/tags) for Kafka tags
 - Check [Docker Hub bitnamilegacy/elasticsearch](https://hub.docker.com/r/bitnamilegacy/elasticsearch/tags) for Elasticsearch tags
 - If images are unavailable, you may need to use alternative repositories or managed services
 
@@ -620,7 +560,7 @@ This section covers common issues and how to resolve them.
 - **Cause:** Insufficient cluster resources or quota limits
 - **Solution:** Check pod status and events:
 ```bash
-kubectl describe pod <pod-name> -n cadence-codelab
+kubectl describe pod <pod-name> -n cadence-postgres-es7
 ```
 Look for messages about resource requests or quota exceeded. You may need to scale up your cluster or reduce resource requests in the values file.
 
@@ -628,7 +568,7 @@ Look for messages about resource requests or quota exceeded. You may need to sca
 - **Cause:** Schema jobs taking too long or failing
 - **Solution:** Remove the `--wait` flag and monitor manually:
 ```bash
-kubectl get pods -n cadence-codelab -w
+kubectl get pods -n cadence-postgres-es7 -w
 ```
 Check schema job logs for specific errors.
 
@@ -638,7 +578,7 @@ Check schema job logs for specific errors.
 - **Cause:** Misconfigured database credentials or PostgreSQL not running
 - **Solution:** Verify PostgreSQL is running:
 ```bash
-kubectl get pods -n cadence-codelab -l app.kubernetes.io/name=postgresql
+kubectl get pods -n cadence-postgres-es7 -l app.kubernetes.io/name=postgresql
 ```
 Confirm credentials in your values file match: `postgresql.auth.username/password/database` should match `config.persistence.database.sql.user/password/dbname`.
 
@@ -646,7 +586,7 @@ Confirm credentials in your values file match: `postgresql.auth.username/passwor
 - **Cause:** Database connectivity or permission issues
 - **Solution:** Check schema job logs:
 ```bash
-kubectl logs job/cadence-release-schema-server -n cadence-codelab
+kubectl logs job/cadence-release-schema-server -n cadence-postgres-es7
 ```
 Look for connection errors or SQL execution failures.
 
@@ -656,7 +596,7 @@ Look for connection errors or SQL execution failures.
 - **Cause:** Elasticsearch pod not running or unreachable
 - **Solution:** Verify Elasticsearch pod is running:
 ```bash
-kubectl get pods -n cadence-codelab -l app.kubernetes.io/name=elasticsearch
+kubectl get pods -n cadence-postgres-es7 -l app.kubernetes.io/name=elasticsearch
 ```
 
 Test connectivity to ES from within the cluster:
@@ -664,16 +604,64 @@ Test connectivity to ES from within the cluster:
 kubectl run -it --rm debug \
   --image=curlimages/curl \
   --restart=Never \
-  -- curl -v http://cadence-release-elasticsearch-master.cadence-codelab.svc.cluster.local:9200
+  -- curl -v http://cadence-release-elasticsearch-master.cadence-postgres-es7.svc.cluster.local:9200
 ```
 
 **Elasticsearch schema job failing:**
 - **Cause:** Cannot reach ES or incorrect version
 - **Solution:** Check ES schema job logs:
 ```bash
-kubectl logs job/cadence-release-schema-elasticsearch -n cadence-codelab
+kubectl logs job/cadence-release-schema-elasticsearch -n cadence-postgres-es7
 ```
 Verify your ES cluster is v7 and reachable from the cluster.
+
+#### Kafka Issues
+
+**Kafka pods not starting:**
+- **Cause:** Resource constraints, volume issues, or KRaft initialization problems
+- **Solution:** Check Kafka pod status:
+```bash
+kubectl get pods -n cadence-postgres-es7 -l app.kubernetes.io/name=kafka
+```
+Check controller pod logs for errors:
+```bash
+kubectl logs -n cadence-postgres-es7 -l app.kubernetes.io/component=controller --tail=100
+```
+Check broker pod logs:
+```bash
+kubectl logs -n cadence-postgres-es7 -l app.kubernetes.io/component=broker --tail=100
+```
+
+**KRaft cluster formation issues:**
+- **Cause:** Controller initialization failures or misconfiguration
+- **Solution:** Look for KRaft-related errors in controller logs. Common issues include:
+  - Metadata directory permissions (should be writable by UID 1001)
+  - Insufficient resources (Kafka needs at least 500m CPU and 1Gi memory)
+  - Network connectivity issues between controller and broker
+
+**Kafka connectivity from Cadence:**
+- **Cause:** Service name resolution or network policy issues
+- **Solution:** Verify Kafka service is accessible:
+```bash
+kubectl get svc -n cadence-postgres-es7 -l app.kubernetes.io/name=kafka
+```
+Expected service name: `cadence-release-kafka.cadence-postgres-es7.svc.cluster.local:9092`
+
+Test connectivity from within cluster:
+```bash
+kubectl run -it --rm debug \
+  --image=busybox \
+  --restart=Never \
+  -- telnet cadence-release-kafka.cadence-postgres-es7.svc.cluster.local 9092
+```
+
+**Kafka volume permission errors:**
+- **Cause:** GKE Autopilot security contexts or PVC issues
+- **Solution:** Verify security contexts are set correctly (runAsUser: 1001, fsGroup: 1001). Check PVC status:
+```bash
+kubectl get pvc -n cadence-postgres-es7 -l app.kubernetes.io/name=kafka
+```
+All PVCs should be `Bound`.
 
 #### Service Access Issues
 
@@ -681,41 +669,41 @@ Verify your ES cluster is v7 and reachable from the cluster.
 - **Cause:** Port-forward not running or wrong port
 - **Solution:** Verify port-forward is active:
 ```bash
-kubectl port-forward -n cadence-codelab svc/cadence-release-web 8088:8088
+kubectl port-forward -n cadence-postgres-es7 svc/cadence-release-web 8088:8088
 ```
 Check that the web pod is running:
 ```bash
-kubectl get pods -n cadence-codelab -l app.kubernetes.io/component=web
+kubectl get pods -n cadence-postgres-es7 -l app.kubernetes.io/component=web
 ```
 
-**tctl commands failing:**
+**cadence CLI commands failing:**
 - **Cause:** Frontend not accessible or wrong address
 - **Solution:** Verify frontend pod is running and port-forward is active:
 ```bash
-kubectl get pods -n cadence-codelab -l app.kubernetes.io/component=frontend
-kubectl port-forward -n cadence-codelab svc/cadence-release-frontend 7833:7833
+kubectl get pods -n cadence-postgres-es7 -l app.kubernetes.io/component=frontend
+kubectl port-forward -n cadence-postgres-es7 svc/cadence-release-frontend 7833:7833
 ```
 
 #### General Debugging Commands
 
 View all resources in the namespace:
 ```bash
-kubectl get all -n cadence-codelab
+kubectl get all -n cadence-postgres-es7
 ```
 
 Check pod logs for any service:
 ```bash
-kubectl logs -n cadence-codelab <pod-name> --tail=100
+kubectl logs -n cadence-postgres-es7 <pod-name> --tail=100
 ```
 
 Describe a pod to see events and errors:
 ```bash
-kubectl describe pod -n cadence-codelab <pod-name>
+kubectl describe pod -n cadence-postgres-es7 <pod-name>
 ```
 
 Check Helm release status:
 ```bash
-helm status cadence-release -n cadence-codelab
+helm status cadence-release -n cadence-postgres-es7
 ```
 
 ### References
