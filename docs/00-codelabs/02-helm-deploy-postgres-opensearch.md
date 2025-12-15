@@ -188,7 +188,7 @@ The values file is well-commented and describes each configuration option. Key p
 
 ### Step 3: Install Cadence with Helm
 
-#### Add Helm repositories
+#### Build chart dependencies
 
 First, ensure you're in the `cadence-charts` directory:
 
@@ -196,21 +196,7 @@ First, ensure you're in the `cadence-charts` directory:
 cd cadence-charts
 ```
 
-Add the required repositories:
-
-```bash
-helm repo add bitnami https://charts.bitnami.com/bitnami
-```
-
-```bash
-helm repo add opensearch https://opensearch-project.github.io/helm-charts/
-```
-
-```bash
-helm repo update
-```
-
-Build chart dependencies:
+Download the dependency charts:
 
 ```bash
 helm dependency build ./charts/cadence
