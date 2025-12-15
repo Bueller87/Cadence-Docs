@@ -322,18 +322,24 @@ kubectl exec -n cadence-postgres-os2 -it "$POD" -- \
 
 **Warning:** These operations will delete all data.
 
-Delete the namespace (recommended for complete cleanup):
+**Recommended: Delete the namespace** (complete cleanup):
 
 ```bash
 kubectl delete namespace cadence-postgres-os2
 ```
 
-This removes all resources including the Helm release and persistent volumes. Deletion may take a minute to complete.
+This removes all resources including PersistentVolumeClaims. Deletion may take a minute.
 
-**Alternative:** To keep the namespace but remove Cadence:
+**Alternative: Helm uninstall** (keeps namespace and PVCs):
 
 ```bash
 helm uninstall cadence-release -n cadence-postgres-os2
+```
+
+**Note:** `helm uninstall` intentionally preserves PersistentVolumeClaims to prevent accidental data loss. To fully clean up after helm uninstall:
+
+```bash
+kubectl delete pvc --all -n cadence-postgres-os2
 ```
 
 ---
