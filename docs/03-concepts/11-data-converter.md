@@ -346,7 +346,7 @@ func (dc *ProtoDataConverter) FromData(data []byte, values ...interface{}) error
 ## References
 
 For complete working examples and advanced implementations, refer to the official Cadence samples:
-- [Data Converter Recipe](https://github.com/cadence-workflow/cadence-samples/tree/master/cmd/samples/recipes/dataconverter)
+- [Data Converter samples](https://github.com/cadence-workflow/cadence-samples/tree/master/new_samples/data) (compressed and encrypted data-converter workflows, with tests and a README)
 - [Cadence Go Client Documentation](https://pkg.go.dev/go.uber.org/cadence)
 
 ---
