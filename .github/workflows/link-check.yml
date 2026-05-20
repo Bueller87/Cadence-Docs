@@ -1,0 +1,99 @@
+name: Link Check
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'blog/**'
+      - 'community/**'
+      - 'faq/**'
+      - 'changelog/**'
+      - 'src/**'
+      - 'static/**'
+      - 'docusaurus.config.ts'
+      - 'sidebars.ts'
+      - 'sidebarsCommunity.js'
+      - 'sidebarsFAQ.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/link-check.yml'
+      - '.lycheeignore'
+  schedule:
+    # Weekly, Monday 06:00 UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  link-check:
+    name: lychee
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js lts/jod (v22)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/jod
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Build the static site so lychee checks the same URLs users will hit
+      # (Docusaurus rewrites paths, strips numeric prefixes, etc.). The
+      # Docusaurus build is also configured to throw on broken internal links,
+      # so this step is the source of truth for internal-link validation.
+      - name: Build site
+        run: npm run build
+
+      - name: Restore lychee cache
+        id: restore-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .lycheecache
+          key: cache-lychee-${{ github.sha }}
+          restore-keys: cache-lychee-
+
+      - name: Run lychee
+        id: lychee
+        uses: lycheeverse/lychee-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Fail the workflow on broken links only when triggered by a PR.
+          # Scheduled runs surface broken links via the tracking issue below.
+          fail: ${{ github.event_name == 'pull_request' }}
+          args: >-
+            --cache
+            --max-cache-age 1d
+            --max-concurrency 8
+            --accept 200,206,429
+            --exclude 'localhost|127\.0\.0\.1|cadence\.local'
+            --exclude-path build/assets
+            --root-dir "${{ github.workspace }}/build"
+            --fallback-extensions html
+            --no-progress
+            'build/**/*.html'
+
+      - name: Save lychee cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .lycheecache
+          key: ${{ steps.restore-cache.outputs.cache-primary-key }}
+
+      - name: Open / update tracking issue (scheduled runs only)
+        if: github.event_name != 'pull_request' && steps.lychee.outputs.exit_code != 0
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: Broken links detected by scheduled lychee run
+          content-filepath: ./lychee/out.md
+          labels: |
+            link-check
+            automated issue

@@ -1,0 +1,21 @@
+# Hosts that block automated link checkers (return 999/403/406/404) but work
+# fine in a real browser. Added as exclusions so the lychee CI workflow does
+# not flag them as false positives. Keep this list short and reviewed.
+
+# LinkedIn returns HTTP 999 to all non-browser User-Agents.
+^https?://([a-z]+\.)?linkedin\.com/
+
+# Slack invite links return 403/redirect to a JS-only page.
+^https?://([a-z]+\.)?slack\.com/
+
+# YouTube channel pages can return 404 to anonymous bot requests.
+^https?://([a-z]+\.)?youtube\.com/@
+
+# Uber's marketing site returns 406 without specific Accept headers.
+^https?://([a-z]+\.)?uber\.com/
+
+# Reddit blocks anonymous bot requests.
+^https?://([a-z]+\.)?reddit\.com/
+
+# X / Twitter is a single-page app and routinely 404s to bots.
+^https?://(www\.)?(x|twitter)\.com/

@@ -103,6 +103,30 @@ Manual approval is required before merging and continuing to deployment.
 Ensure you have a `.npmrc` [file](https://docs.npmjs.com/cli/v9/configuring-npm/npmrc/) configured with `registry=https://registry.npmjs.org/`.
 This will ensure the dependencies are pulled from the correct source and to prevent internal npm registries from being pushed onto the package-lock.json
 
+## Links
+
+A few conventions to keep links healthy across the site:
+
+- **Use Docusaurus-relative links for any page hosted here.** Inside `docs/`,
+  `community/`, and `faq/`, never link to `https://cadenceworkflow.io/...`.
+  Use `/docs/...`, `/community/...`, `/faq/...`, or sibling `./foo.md` /
+  `../bar.md` links. Drop trailing slashes — the site is built with
+  `trailingSlash: false`.
+- **Pin GitHub `tree` / `blob` links when the surrounding doc is
+  version-specific.** Use a tag or commit SHA (e.g. `…/blob/v0.21.0/…`)
+  instead of `master` for release notes, migration guides, and blog posts
+  tied to a specific version. Keep `master` for evergreen reference docs.
+- **Anchors are derived from heading text.** Don't rename a heading without
+  first searching the repo for inbound `#anchor` references — silently
+  changing a heading breaks every existing link to it.
+- **Validate before pushing.** Run `npm run build` locally; the build is
+  configured to throw on broken internal Markdown links and anchors. The
+  `.github/workflows/link-check.yml` workflow uses
+  [lychee](https://github.com/lycheeverse/lychee) to additionally validate
+  outbound URLs on every PR that touches docs, blog, community, faq, or
+  changelog content, and a weekly cron run opens a tracking issue for any
+  newly-broken outbound links.
+
 ## License
 
 The source code in this repository is licensed under the Apache 2.0 License.
