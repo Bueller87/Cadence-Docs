@@ -1,0 +1,50 @@
+---
+title: Cadence vs Dapr for agentic AI workflows
+description: A brief internal assessment of developer experience and gaps across Cadence, its SDKs and samples, and Dapr Agents.
+---
+
+# Cadence vs Dapr for agentic AI workflows
+
+**Internal assessment · November 19, 2026**  
+**Scope:** Cadence platform, SDKs, and `cadence-ai-samples` together, compared with Dapr runtime and Dapr Agents. Focus: building, understanding, and running agents.
+
+**Takeaway:** Dapr packages more of the agent application experience: tools, hosting, memory, and tracing. Cadence already combines durable execution with familiar agent frameworks and useful samples. The clearest opportunities are integration coverage, simpler learning paths, and support clarity; this review does not establish a missing core durability capability.
+
+## At a glance
+
+“Integration gap” means a supported, documented path was not found in the reviewed SDK and sample surfaces. It does not mean Cadence cannot execute the operation.
+
+| Developer task | Dapr / Dapr Agents | Cadence today | Assessment for Cadence |
+| --- | --- | --- | --- |
+| **Understand a first agent** | Numbered quickstarts progress through agents, hosting, orchestration, and tracing. [D1] | Explorer and generators exist. Human in the Loop has a compact agent flow; the landing page starts with Ticket Routing. [C2] | **Learning-path gap.** Lead with the smallest agent example, then add operational complexity. |
+| **Build and expose agents** | `DurableAgent`, `AgentRunner`, HTTP serving, pub/sub triggers, and multi-agent examples. [D1] | Released Python adapters for OpenAI Agents and Google ADK; handoff and research recipes. Application endpoints and messaging need application integration. [C1][C2] | **Packaging difference.** Clarify supported framework boundaries and provide a minimal hosting pattern. |
+| **Connect MCP tools** | MCP clients and discovery through configured Dapr `MCPServer` resources. [D1][D2] | No equivalent turnkey MCP recipe found in the reviewed catalog or Python adapters. | **Integration gap.** Demonstrate discovery, credentials, tool execution, and durable failure handling. |
+| **Remember and retrieve context** | Conversation-memory backends, document processing, embeddings, and vector-store integrations. [D3] | Frameworks supply session concepts; Cadence records execution. No comparable curated memory/retrieval path found in the reviewed samples. [C1][C2] | **Integration gap.** Document conversation persistence and retrieval separately from workflow history. |
+| **Debug model and tool behavior** | Agent instrumentation and a tracing quickstart connect model/tool operations with workflow traces. [D1] | Activities expose model/tool execution in history. The reviewed OpenAI introduction and Human in the Loop sample disable framework tracing. [C1][C2] | **Demonstration gap.** Show correlated workflow, model, and tool traces, with content controls. |
+| **Approve and recover work** | Approval hooks/events and durable workflow execution. [D1] | Human in the Loop supports approval through Cadence Web. Incident Triage documents worker interruption/restart, bounded execution, and keyed writes. [C2] | **Existing strength to expose.** Improve discovery; approval and recovery are available on both sides. |
+| **Install a known combination** | Published agent package and provider configuration examples; runtime and component versions still matter. [D1][D2] | Both adapters appear in SDK v0.4.1. Reviewed recipes pin a specific Git revision and framework versions. [C1][C2] | **Support-clarity gap.** Explain the pin and publish the exact released/tested combinations. |
+| **Operate running agents** | Local Dev Dashboard plus separately supplied production-console options. [O1] | Cadence Web supports production workflow inspection and application-defined controls. [O1] | **Platform strength.** Show an agent operator journey; workflow history alone is not full agent observability. |
+
+## Three proposed priorities
+
+1. **Make the smallest complete agent the learning path.** Start with Human in the Loop, then link Incident Triage's recovery rehearsal. Reuse the Explorer and templates. Keep agent decisions readable apart from setup and presentation code. Measure whether a newcomer can run, explain, and modify it.
+2. **Add focused integration recipes.** Start with MCP, then conversation memory and retrieval using existing frameworks and stores. Preserve independently copyable recipes. Show which operations run as Activities, what survives a restart, and how repeated external writes are handled.
+3. **Make support and debugging explicit.** Consolidate the tested Python/framework/provider combinations, explain Git pins, and distinguish mock coverage from live verification. Add one tracing walkthrough connecting an agent run, model call, and tool call to its Cadence execution.
+
+Cadence's clearest positioning is **familiar agent frameworks running within a shared, inspectable workflow platform**. Demonstrate durable human waits, failure recovery, and operator controls in one understandable story. Dapr also provides durable agents; these capabilities alone do not establish superiority.
+
+## Caveats
+
+- Source review, not a usability study or execution test. No performance, reliability, cost, or popularity ranking was measured. Priorities above are proposals.
+- Workflow history is not conversation memory or retrieval. Dapr's memory abstraction also requires an appropriate backend; its default list memory does not establish cross-process persistence.
+- Compare specific integrations: Dapr also documents LangGraph checkpoint and Strands session extensions, with different semantics from durable agent execution. Generic Workflow SDK language counts do not establish agent-framework parity. [D2]
+- Dapr still needs its runtime and backing services. Its `MCPServer` resource uses an alpha API version. The Dev Dashboard explicitly targets local development; Diagrid's production console is a separate offering. [D2][O1]
+
+## Sources and review boundary
+
+- **[D1]** Dapr Agents v1.1.1: [quickstarts](https://github.com/dapr/dapr-agents/blob/v1.1.1/quickstarts/README.md), [memory/MCP/approval configuration](https://github.com/dapr/dapr-agents/blob/v1.1.1/dapr_agents/agents/configs.py), [dependencies](https://github.com/dapr/dapr-agents/blob/v1.1.1/pyproject.toml).
+- **[D2]** Dapr: [MCPServer resource](https://docs.dapr.io/developing-ai/mcp/mcp-server-resource/), [Python SDK extensions](https://github.com/dapr/python-sdk#readme). Living documentation; verify deployed versions.
+- **[D3]** Dapr Agents v1.1.1: [memory](https://github.com/dapr/dapr-agents/tree/v1.1.1/dapr_agents/memory), [document processing](https://github.com/dapr/dapr-agents/tree/v1.1.1/dapr_agents/document), [vector stores](https://github.com/dapr/dapr-agents/tree/v1.1.1/dapr_agents/storage/vectorstores).
+- **[C1]** Cadence Python v0.4.1: [OpenAI Agents](https://github.com/cadence-workflow/cadence-python-client/blob/v0.4.1/cadence/contrib/openai/README.md), [Google ADK](https://github.com/cadence-workflow/cadence-python-client/blob/v0.4.1/cadence/contrib/google_adk/README.md), [package extras](https://github.com/cadence-workflow/cadence-python-client/blob/v0.4.1/pyproject.toml). Adapter limits apply; OpenAI documentation specifies function tools.
+- **[C2]** Samples snapshot `7e9e409`: [landing page](https://github.com/cadence-workflow/cadence-ai-samples/tree/7e9e409), [Human in the Loop](https://github.com/cadence-workflow/cadence-ai-samples/tree/7e9e409/recipes/human-in-the-loop), [Incident Triage](https://github.com/cadence-workflow/cadence-ai-samples/tree/7e9e409/recipes/incident-triage), [template profiles](https://github.com/cadence-workflow/cadence-ai-samples/blob/7e9e409/templates/profiles/README.md).
+- **[O1]** [Cadence Web](https://github.com/cadence-workflow/cadence-web), [Custom Workflow Controls](https://cadenceworkflow.io/docs/concepts/workflow-queries-formatted-data/), [Dapr Dev Dashboard scope](https://github.com/diagridio/dev-dashboard#non-goals), [Diagrid workflow console](https://docs.diagrid.io/operate/project-operations/workflows/). Dashboard sources have independent release cycles.

@@ -8,6 +8,8 @@ export default {
     { type: 'doc', id: 'index', label: 'Overview' },
     { type: 'doc', id: 'best-practices' },
     { type: 'doc', id: 'cadence-vs-temporal' },
+    { type: 'doc', id: 'cadence-vs-dapr' },
+    { type: 'doc', id: 'cadence-vs-dapr-agentic-ai' },
     { type: 'doc', id: 'cadence-faq' },
     { type: 'doc', id: 'migrate-from-temporal' },
     { type: 'doc', id: 'how-to-add-a-new-faq' },
